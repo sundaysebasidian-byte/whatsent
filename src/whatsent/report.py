@@ -84,17 +84,28 @@ def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict |
 
 
 def redact_home(obj, home: Path):
-    """Replace the home folder with ~ everywhere, so reports can be shared without the user name."""
-    prefix = str(home).rstrip("/")
-    if len(prefix) < 2:
-        return obj
-    if isinstance(obj, str):
-        return obj.replace(prefix + "/", "~/") if obj != prefix else "~"
-    if isinstance(obj, list):
-        return [redact_home(x, home) for x in obj]
-    if isinstance(obj, dict):
-        return {k: redact_home(v, home) for k, v in obj.items()}
-    return obj
+    """Show paths under the home folder as ~/..., so reports can be shared without the user name.
+
+    Only whole path prefixes are replaced. Both the given and the resolved home count, since
+    macOS reports /var/... and /private/var/... for the same folder."""
+    prefixes = sorted({str(home).rstrip("/"), str(Path(home).resolve()).rstrip("/")}, key=len, reverse=True)
+    prefixes = [p for p in prefixes if len(p) > 1]
+
+    def walk(x):
+        if isinstance(x, str):
+            for p in prefixes:
+                if x == p:
+                    return "~"
+                if x.startswith(p + "/"):
+                    return "~" + x[len(p):]
+            return x
+        if isinstance(x, list):
+            return [walk(v) for v in x]
+        if isinstance(x, dict):
+            return {k: walk(v) for k, v in x.items()}
+        return x
+
+    return walk(obj)
 
 
 def write(summary: dict, out_dir: Path) -> Path:
