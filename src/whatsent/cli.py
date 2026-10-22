@@ -186,6 +186,7 @@ whatsent: {how}
         "workspace": str(workspace),
         "task_prompt": canary.TASK_PROMPT,
         "warnings": warnings,
+        "sample": getattr(args, "sample", False),  # True for the simulated demo agent
     }
     summary = report.summarize(meta, canaries, report.load_events(proxy.events_file), disk, direct,
                                home=getattr(args, "home", None))

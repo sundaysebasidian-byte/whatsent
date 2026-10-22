@@ -18,7 +18,8 @@ def test_demo_end_to_end(tmp_path):
     (run_dir,) = out.iterdir()
     s = json.loads((run_dir / "report.json").read_text())
     by_id = {c["id"]: c for c in s["canaries"]}
-    assert s["agent"] == AGENT_NAME
+    assert s["agent"] == AGENT_NAME and s["sample"] is True
+    assert json.loads((run_dir / "result.json").read_text())["sample"] is True
 
     assert by_id["dotenv"]["sent_to"] == [HOSTS["telemetry"]]  # plain HTTP
     assert by_id["task_file"]["sent_to"] == [HOSTS["api"]]  # HTTPS + gzip, decrypted via our CA

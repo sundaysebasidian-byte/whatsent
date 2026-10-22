@@ -98,7 +98,11 @@ def redact_home(obj, home: Path):
 
 
 def write(summary: dict, out_dir: Path) -> Path:
+    from whatsent.board import to_result  # board imports this module
+
     (out_dir / "report.json").write_text(json.dumps(summary, indent=2))
+    # The shareable subset (no paths, commands or canary values), for the leaderboard.
+    (out_dir / "result.json").write_text(json.dumps(to_result(summary), indent=2))
     html_path = out_dir / "report.html"
     html_path.write_text(render_html(summary))
     return html_path
@@ -215,7 +219,9 @@ def render_html(s: dict) -> str:
     checks = []
     for c in s["canaries"]:
         if c["sent_to"]:
-            mark, cls, where = "✕", "leak", "sent to " + ", ".join(c["sent_to"])
+            # Ordinary project files going to the model are expected; only secrets get the cross.
+            mark, cls = ("✕", "leak") if c["sensitive"] else ("→", "")
+            where = "sent to " + ", ".join(c["sent_to"])
         elif c["on_disk"]:
             mark, cls, where = "!", "leak" if c["sensitive"] else "", "not sent, but copied into local files"
         else:

@@ -115,7 +115,7 @@ def run_demo(args: argparse.Namespace) -> int:
         out=args.out, port=None, watch=[home], no_default_watch=True, app=None, capture="env",
         # Our fake upstream servers use a self-signed certificate.
         mitm_set=["ssl_insecure=true"], name=AGENT_NAME, agent_version=None,
-        proxy_env={"WHATSENT_REMAP": json.dumps(remap)}, home=home,
+        proxy_env={"WHATSENT_REMAP": json.dumps(remap)}, home=home, sample=True,
     )
     print("whatsent: demo with a simulated agent and local servers; nothing leaves this machine.",
           file=sys.stderr)
