@@ -13,10 +13,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from whatsent import __version__, canary, diskwatch, report
+from whatsent import __version__, apps, canary, diskwatch, report
 from whatsent.capture import Proxy
 from whatsent.detect import Matcher
 from whatsent.netwatch import ConnectionSampler
+
+QUICK_EXIT = 5.0  # an app that quits this fast probably handed over to a running copy
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,9 +26,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"whatsent {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run an agent inside a canary project and report what left the machine",
-                         usage="whatsent run [options] -- <agent command> [args...]")
+                         usage="whatsent run [options] -- <agent command> [args...]\n"
+                               "       whatsent run --app <cursor|trae|...|path> [options] [-- app args]")
     run.add_argument("--out", type=Path, default=Path("whatsent-report"),
                      help="folder for reports (default: ./whatsent-report)")
+    run.add_argument("--app", metavar="NAME|PATH",
+                     help=f"desktop IDE agent to launch: {', '.join(sorted(apps.KNOWN))}, a .app bundle "
+                          f"or an executable")
+    run.add_argument("--capture", default="env", metavar="MODE",
+                     help="env (default): proxy settings only. local or local:SPEC: also capture at OS level "
+                          "the traffic of processes matching SPEC (experimental; macOS asks to allow a "
+                          "system extension, Linux needs root)")
     run.add_argument("--port", type=int, help="proxy port (default: a free port)")
     run.add_argument("--watch", type=Path, action="append", default=[], metavar="DIR",
                      help="extra folder to watch for files the agent writes (repeatable)")
@@ -40,6 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("demo", help="see a sample report: a simulated agent against local servers, offline")
     demo.add_argument("--out", type=Path, default=Path("whatsent-report"),
                       help="folder for reports (default: ./whatsent-report)")
+    board = sub.add_parser("board", help="build the leaderboard page from report.json files")
+    board.add_argument("reports", nargs="+", type=Path, help="report.json files or folders containing them")
+    board.add_argument("-o", "--out", type=Path, default=Path("site"), help="output folder (default: ./site)")
     return p
 
 
@@ -48,18 +61,41 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "demo":
         from whatsent.demo import run_demo
         return run_demo(args)
+    if args.cmd == "board":
+        from whatsent.board import build
+        return build(args.reports, args.out)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.capture != "env" and args.capture != "local" and not args.capture.startswith("local:"):
+        print("whatsent: --capture is env, local or local:SPEC", file=sys.stderr)
+        return 2
+    if args.app:
+        return run_app(args, command)
     if not command:
         print("whatsent: give the agent command after --, e.g. whatsent run -- claude", file=sys.stderr)
         return 2
     return run(args, command)
 
 
-def run(args: argparse.Namespace, command: list[str]) -> int:
+def run_app(args: argparse.Namespace, extra: list[str]) -> int:
+    try:
+        app = apps.resolve(args.app)
+    except apps.AppError as exc:
+        print(f"whatsent: {exc}", file=sys.stderr)
+        return 2
+    if apps.running(app):
+        print(f"whatsent: {app.name} is already running. Quit it completely first: a second launch is handed "
+              f"to the running copy, which whatsent cannot see.", file=sys.stderr)
+        return 2
+    args.name = args.name or app.name
+    return run(args, extra, app=app)
+
+
+def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None) -> int:
     started = datetime.now()
     run_dir = (args.out / started.strftime("%Y%m%d-%H%M%S")).resolve()
     workspace = run_dir / "workspace"
     run_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
 
     canaries = [c.to_dict() for c in canary.create_workspace(workspace)]
     canaries_file = run_dir / "canaries.json"
@@ -70,19 +106,30 @@ def run(args: argparse.Namespace, command: list[str]) -> int:
     print(f"whatsent: snapshotting {len(roots)} folders…", file=sys.stderr)
     before, truncated = diskwatch.snapshot(roots, exclude=[run_dir])
 
+    capture = getattr(args, "capture", "env")
+    local_spec = None
+    if capture.startswith("local"):
+        local_spec = capture.partition(":")[2] or (app.executable.name if app else Path(command[0]).name)
     proxy = Proxy(run_dir, canaries_file, run_dir / "events.jsonl", args.port, args.mitm_set,
-                  getattr(args, "proxy_env", None))
+                  getattr(args, "proxy_env", None), local_spec)
     try:
         proxy.start()
     except RuntimeError as exc:
         print(f"whatsent: {exc}", file=sys.stderr)
         return 1
     env = proxy.agent_env(dict(os.environ), proxy.write_ca_bundle(run_dir / "ca-bundle.pem"))
+    if app:
+        command = apps.command(app, proxy.port, workspace, command)
+        how = (f"In {app.name}: open the AI chat, ask the prompt below and let it finish, "
+               f"then quit {app.name} completely (Cmd+Q / File > Exit).")
+    else:
+        how = "Use this prompt (the same one for every agent you compare), then exit the agent:"
 
     print(f"""
 whatsent: canary project ready at {workspace}
-whatsent: proxy on 127.0.0.1:{proxy.port}, starting: {" ".join(command)}
-whatsent: suggested prompt (use the same one for every agent you compare):
+whatsent: proxy on 127.0.0.1:{proxy.port}{f", OS-level capture for {local_spec!r}" if local_spec else ""}
+whatsent: starting {args.name or Path(command[0]).name}
+whatsent: {how}
 
     {canary.TASK_PROMPT}
 """, file=sys.stderr)
@@ -99,16 +146,25 @@ whatsent: suggested prompt (use the same one for every agent you compare):
         proxy.stop()
         print(f"whatsent: could not start {command[0]}: {exc}", file=sys.stderr)
         return 127
-    sampler = ConnectionSampler(agent.pid, proxy.port)
-    sampler.start()
+    # With OS-level capture every connection is redirected, so sampling for bypasses means nothing.
+    sampler = None if local_spec else ConnectionSampler(agent.pid, proxy.port)
+    if sampler:
+        sampler.start()
     try:
         exit_code = agent.wait()
         duration = time.monotonic() - t0
         time.sleep(1.0)  # let in-flight requests reach the log
     finally:
         signal.signal(signal.SIGINT, old_sigint)
-        direct = sampler.stop()
+        direct = sampler.stop() if sampler else []
         proxy.stop()
+
+    if app and duration < QUICK_EXIT:
+        warnings.append(f"{app.name} exited after {duration:.0f}s. If it was already open, it handed this run "
+                        f"to the running copy and nothing was captured. Quit it completely and run again.")
+    problem = proxy.local_capture_problem()
+    if problem:
+        warnings.append(problem)
 
     print("whatsent: checking watched folders…", file=sys.stderr)
     after, truncated_after = diskwatch.snapshot(roots, exclude=[run_dir])
@@ -120,6 +176,8 @@ whatsent: suggested prompt (use the same one for every agent you compare):
         "whatsent_version": __version__,
         "agent": args.name or Path(command[0]).name,
         "agent_version": args.agent_version,
+        "kind": "app" if app else "cli",
+        "capture": f"local:{local_spec}" if local_spec else "env",
         "command": command,
         "started_at": started.isoformat(timespec="seconds"),
         "duration_s": duration,
@@ -127,6 +185,7 @@ whatsent: suggested prompt (use the same one for every agent you compare):
         "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
         "workspace": str(workspace),
         "task_prompt": canary.TASK_PROMPT,
+        "warnings": warnings,
     }
     summary = report.summarize(meta, canaries, report.load_events(proxy.events_file), disk, direct,
                                home=getattr(args, "home", None))
@@ -146,8 +205,9 @@ def print_summary(s: dict, html: Path) -> None:
     for c in s["canaries"]:
         if c["sent_to"]:
             lines.append(f"  - {c['label']} ({c['file']}) -> {', '.join(c['sent_to'])}")
-    ni = s["not_inspected"]
-    if ni["tls_failed"] or any(not c["local"] for c in ni["direct_connections"]):
+    if t["not_inspected"]:
         lines.append("  ! some traffic could not be inspected, see the report")
+    for w in s.get("warnings", []):
+        lines.append(f"  ! {w}")
     lines.append(f"whatsent: report at {html}")
     print("\n".join(lines), file=sys.stderr)

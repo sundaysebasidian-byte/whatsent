@@ -33,6 +33,12 @@ class Recorder:
         with self.lock:
             self.out.write(json.dumps(record) + "\n")
 
+    @staticmethod
+    def _via(conn) -> str:
+        # "local": caught by OS-level capture, i.e. this traffic ignored the proxy settings.
+        mode = getattr(conn, "proxy_mode", None)
+        return "local" if mode is not None and getattr(mode, "type_name", "") == "local" else "proxy"
+
     def _http(self, flow, error: str | None = None) -> None:
         req = flow.request
         body = req.get_content(strict=False) or b""
@@ -52,6 +58,7 @@ class Recorder:
             "bytes_in": len(resp.raw_content or b"") if resp else 0,
             "canaries": sorted(self.matcher.scan(head + b"\n" + body)),
             "error": error,
+            "via": self._via(flow.client_conn),
         })
 
     def response(self, flow) -> None:
@@ -71,6 +78,7 @@ class Recorder:
             "path": flow.request.path[:300],
             "bytes_out": len(msg.content),
             "canaries": sorted(self.matcher.scan(msg.content)),
+            "via": self._via(flow.client_conn),
         })
 
     def tls_failed_client(self, data) -> None:
@@ -83,6 +91,7 @@ class Recorder:
             "host": host,
             "port": server.address[1] if server.address else None,
             "error": data.conn.error,
+            "via": self._via(data.conn),
         })
 
 

@@ -34,11 +34,13 @@ def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict |
             entry["count"] += 1
             continue
         h = hosts.setdefault(ev["host"], {"host": ev["host"], "requests": 0, "bytes_out": 0,
-                                          "bytes_in": 0, "canaries": set(), "errors": 0})
+                                          "bytes_in": 0, "canaries": set(), "errors": 0,
+                                          "bypassed_proxy": False})
         h["requests"] += 1
         h["bytes_out"] += ev.get("bytes_out", 0)
         h["bytes_in"] += ev.get("bytes_in", 0)
         h["errors"] += 1 if ev.get("error") else 0
+        h["bypassed_proxy"] |= ev.get("via") == "local"
         for cid in ev.get("canaries", []):
             h["canaries"].add(cid)
             sent_to[cid].add(ev["host"])
@@ -177,6 +179,7 @@ td.num{text-align:right;white-space:nowrap}th.num{text-align:right}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;overflow-wrap:anywhere}
 details{margin-top:4px}summary{cursor:pointer;color:var(--mute);font-size:13px}
 details code{display:block;background:var(--chip);padding:8px 10px;border-radius:8px;margin-top:6px}
+.warnbox{background:#fff4e0;border:1px solid #f1c27d;color:#6b3a00;border-radius:12px;padding:10px 14px;margin:0 0 16px;font-size:14px}
 .empty{color:var(--mute)}footer{color:var(--mute);font-size:12px;text-align:center;margin-top:22px}
 @media (max-width:560px){.hero{padding:20px 18px}.hero h1{font-size:27px}.stats{gap:18px}
 .chip{white-space:normal;border-radius:8px}.hide-sm{display:none}table.wide{min-width:520px}}
@@ -232,7 +235,9 @@ def render_html(s: dict) -> str:
         canary_rows.append([e(c["label"]), f"<code>{e(c['file'])}</code>", status])
 
     dest_rows = [[
-        f"<code>{e(h['host'])}</code>", str(h["requests"]), human_bytes(h["bytes_out"]),
+        f"<code>{e(h['host'])}</code>"
+        + ('<br><span class="chip">ignored proxy, caught at OS level</span>' if h.get("bypassed_proxy") else ""),
+        str(h["requests"]), human_bytes(h["bytes_out"]),
         human_bytes(h["bytes_in"]),
         "".join(chip(cid) for cid in h["canaries"]) or '<span class="empty">none</span>',
     ] for h in s["destinations"]]
@@ -274,6 +279,7 @@ def render_html(s: dict) -> str:
 <div><b>{t.get("not_inspected", 0)}</b><span>not inspected</span></div>
 <div><b>{len(d["suspicious"])}</b><span>new archives / blobs</span></div></div></div>
 
+{"".join(f'<div class="warnbox">{e(w)}</div>' for w in s.get("warnings", []))}
 <section><h2>Canaries</h2>
 <p class="note">Fake, randomly generated markers planted in a throwaway project. Red means something no task needed left the machine.</p>
 {table(["Planted as", "File", "What happened"], canary_rows, "No canaries were planted.",
@@ -294,6 +300,6 @@ def render_html(s: dict) -> str:
 Encrypted uploads usually show up here as a new archive or large blob.</p>
 {table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}</section>
 
-<footer>whatsent {e(s["whatsent_version"])} · {e(s["platform"])} · canary values are fake and unique to this run · {REPO}</footer>
+<footer>whatsent {e(s["whatsent_version"])} · {e(s["platform"])} · capture: {e(s.get("capture", "env"))} · canary values are fake and unique to this run · {REPO}</footer>
 </main></body></html>
 """

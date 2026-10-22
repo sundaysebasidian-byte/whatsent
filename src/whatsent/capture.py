@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -22,7 +23,7 @@ def free_port() -> int:
 class Proxy:
     def __init__(self, run_dir: Path, canaries_file: Path, events_file: Path,
                  port: int | None = None, mitm_options: list[str] | None = None,
-                 extra_env: dict[str, str] | None = None):
+                 extra_env: dict[str, str] | None = None, local_spec: str | None = None):
         self.confdir = run_dir / "mitmproxy"
         self.log_file = run_dir / "mitmproxy.log"
         self.canaries_file = canaries_file
@@ -30,6 +31,7 @@ class Proxy:
         self.port = port or free_port()
         self.mitm_options = mitm_options or []
         self.extra_env = extra_env or {}
+        self.local_spec = local_spec  # mitmproxy "local" mode: OS-level capture by process
         self.proc: subprocess.Popen | None = None
 
     @property
@@ -48,11 +50,13 @@ class Proxy:
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, env.get("PYTHONPATH")]))
         cmd = [
             sys.executable, "-c", "from mitmproxy.tools.main import mitmdump; mitmdump()",
-            "--listen-host", "127.0.0.1", "--listen-port", str(self.port),
+            "--mode", f"regular@127.0.0.1:{self.port}",
             "--set", f"confdir={self.confdir}",
             "--set", "flow_detail=0",
             "-q", "-s", str(ADDON),
         ]
+        if self.local_spec:
+            cmd += ["--mode", f"local:{self.local_spec}"]
         for opt in self.mitm_options:
             cmd += ["--set", opt]
         self.log = open(self.log_file, "w")
@@ -79,6 +83,19 @@ class Proxy:
                 self.proc.wait()
         if getattr(self, "log", None):
             self.log.close()
+
+    def local_capture_problem(self) -> str | None:
+        """Best-effort check that OS-level capture actually started (it needs a macOS system
+        extension or root + eBPF on Linux, and fails quietly otherwise)."""
+        if not self.local_spec:
+            return None
+        try:
+            log = self.log_file.read_text(errors="replace")
+        except OSError:
+            return None
+        if re.search(r"(?i)redirector.*(fail|exited)|ebpf.*fail|local.*mode.*(error|fail)", log):
+            return f"system-level capture did not start, see {self.log_file}"
+        return None
 
     def agent_env(self, base: dict[str, str], ca_bundle: Path) -> dict[str, str]:
         """Environment for the agent: route traffic through us and trust our CA."""
