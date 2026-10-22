@@ -34,12 +34,20 @@ def build_parser() -> argparse.ArgumentParser:
                      help="only watch folders given with --watch")
     run.add_argument("--mitm-set", action="append", default=[], metavar="KEY=VALUE",
                      help="pass an option through to mitmproxy (advanced, repeatable)")
+    run.add_argument("--name", help="agent name shown in the report (default: the command name)")
+    run.add_argument("--agent-version", help="agent version shown in the report and leaderboard")
     run.add_argument("command", nargs=argparse.REMAINDER, help="agent command, after --")
+    demo = sub.add_parser("demo", help="see a sample report: a simulated agent against local servers, offline")
+    demo.add_argument("--out", type=Path, default=Path("whatsent-report"),
+                      help="folder for reports (default: ./whatsent-report)")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.cmd == "demo":
+        from whatsent.demo import run_demo
+        return run_demo(args)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         print("whatsent: give the agent command after --, e.g. whatsent run -- claude", file=sys.stderr)
@@ -62,7 +70,8 @@ def run(args: argparse.Namespace, command: list[str]) -> int:
     print(f"whatsent: snapshotting {len(roots)} folders…", file=sys.stderr)
     before, truncated = diskwatch.snapshot(roots, exclude=[run_dir])
 
-    proxy = Proxy(run_dir, canaries_file, run_dir / "events.jsonl", args.port, args.mitm_set)
+    proxy = Proxy(run_dir, canaries_file, run_dir / "events.jsonl", args.port, args.mitm_set,
+                  getattr(args, "proxy_env", None))
     try:
         proxy.start()
     except RuntimeError as exc:
@@ -109,6 +118,8 @@ whatsent: suggested prompt (use the same one for every agent you compare):
 
     meta = {
         "whatsent_version": __version__,
+        "agent": args.name or Path(command[0]).name,
+        "agent_version": args.agent_version,
         "command": command,
         "started_at": started.isoformat(timespec="seconds"),
         "duration_s": duration,
@@ -117,7 +128,8 @@ whatsent: suggested prompt (use the same one for every agent you compare):
         "workspace": str(workspace),
         "task_prompt": canary.TASK_PROMPT,
     }
-    summary = report.summarize(meta, canaries, report.load_events(proxy.events_file), disk, direct)
+    summary = report.summarize(meta, canaries, report.load_events(proxy.events_file), disk, direct,
+                               home=getattr(args, "home", None))
     html = report.write(summary, run_dir)
     print_summary(summary, html)
     return exit_code if isinstance(exit_code, int) and exit_code >= 0 else 1
@@ -127,7 +139,7 @@ def print_summary(s: dict, html: Path) -> None:
     t = s["totals"]
     lines = [
         "",
-        f"whatsent: {t['leaked']} of {t['canaries']} canaries left this machine"
+        f"whatsent: {s['agent']}: {t['leaked']} of {t['canaries']} canaries left this machine"
         f" ({t['leaked_sensitive']} sensitive), {t['requests']} requests to {t['hosts']} destinations,"
         f" {report.human_bytes(t['bytes_out'])} sent",
     ]

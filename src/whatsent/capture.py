@@ -21,13 +21,15 @@ def free_port() -> int:
 
 class Proxy:
     def __init__(self, run_dir: Path, canaries_file: Path, events_file: Path,
-                 port: int | None = None, mitm_options: list[str] | None = None):
+                 port: int | None = None, mitm_options: list[str] | None = None,
+                 extra_env: dict[str, str] | None = None):
         self.confdir = run_dir / "mitmproxy"
         self.log_file = run_dir / "mitmproxy.log"
         self.canaries_file = canaries_file
         self.events_file = events_file
         self.port = port or free_port()
         self.mitm_options = mitm_options or []
+        self.extra_env = extra_env or {}
         self.proc: subprocess.Popen | None = None
 
     @property
@@ -40,6 +42,7 @@ class Proxy:
         env = {k: v for k, v in os.environ.items() if k not in PROXY_VARS}
         env["WHATSENT_CANARIES"] = str(self.canaries_file)
         env["WHATSENT_EVENTS"] = str(self.events_file)
+        env.update(self.extra_env)
         # Make the addon's `import whatsent` work even when run from a source checkout.
         pkg_parent = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, env.get("PYTHONPATH")]))

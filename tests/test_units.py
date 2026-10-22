@@ -68,7 +68,7 @@ def test_report_escapes_and_summarizes(tmp_path):
             "exit_code": 0, "platform": "test"}
     s = report.summarize(meta, canaries, events, None, [])
     assert s["totals"] == {"canaries": 1, "leaked": 1, "leaked_sensitive": 1, "requests": 2,
-                           "hosts": 2, "bytes_out": 2058}
+                           "hosts": 2, "bytes_out": 2058, "not_inspected": 1, "copied_to_disk": 0}
     assert s["destinations"][0]["host"] == "<script>x</script>"
     html = report.write(s, tmp_path).read_text()
     assert "<script>x</script>" not in html and "&lt;script&gt;" in html
