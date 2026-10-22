@@ -68,8 +68,18 @@ def test_report_escapes_and_summarizes(tmp_path):
             "exit_code": 0, "platform": "test"}
     s = report.summarize(meta, canaries, events, None, [])
     assert s["totals"] == {"canaries": 1, "leaked": 1, "leaked_sensitive": 1, "requests": 2,
-                           "hosts": 2, "bytes_out": 2058}
+                           "hosts": 2, "bytes_out": 2058, "not_inspected": 1, "copied_to_disk": 0}
     assert s["destinations"][0]["host"] == "<script>x</script>"
     html = report.write(s, tmp_path).read_text()
     assert "<script>x</script>" not in html and "&lt;script&gt;" in html
     assert "pinned.example.com" in html and TOKEN not in html
+
+
+def test_redact_home_only_replaces_path_prefixes(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)  # like macOS /var -> /private/var
+    out = report.redact_home(
+        {"a": f"{real}/x", "b": [f"{link}/y", str(link)], "c": f"/other{real}/z"}, link)
+    assert out == {"a": "~/x", "b": ["~/y", "~"], "c": f"/other{real}/z"}

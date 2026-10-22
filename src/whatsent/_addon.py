@@ -1,7 +1,8 @@
 """mitmproxy addon loaded by ``whatsent run``. Writes one JSON line per event.
 
 Paths come from the environment: WHATSENT_CANARIES (JSON file with the
-planted canaries) and WHATSENT_EVENTS (JSONL output).
+planted canaries) and WHATSENT_EVENTS (JSONL output). WHATSENT_REMAP, used only
+by ``whatsent demo``, maps made-up host names to local test servers.
 """
 
 from __future__ import annotations
@@ -21,11 +22,22 @@ class Recorder:
         self.matcher = Matcher({c["id"]: c["token"] for c in canaries})
         self.out = open(os.environ["WHATSENT_EVENTS"], "a", buffering=1)
         self.lock = threading.Lock()
+        self.remap = {h: tuple(a) for h, a in json.loads(os.environ.get("WHATSENT_REMAP", "{}")).items()}
+
+    def server_connect(self, data) -> None:
+        if self.remap and data.server.address and data.server.address[0] in self.remap:
+            data.server.address = self.remap[data.server.address[0]]
 
     def _write(self, record: dict) -> None:
         record["ts"] = time.time()
         with self.lock:
             self.out.write(json.dumps(record) + "\n")
+
+    @staticmethod
+    def _via(conn) -> str:
+        # "local": caught by OS-level capture, i.e. this traffic ignored the proxy settings.
+        mode = getattr(conn, "proxy_mode", None)
+        return "local" if mode is not None and getattr(mode, "type_name", "") == "local" else "proxy"
 
     def _http(self, flow, error: str | None = None) -> None:
         req = flow.request
@@ -46,6 +58,7 @@ class Recorder:
             "bytes_in": len(resp.raw_content or b"") if resp else 0,
             "canaries": sorted(self.matcher.scan(head + b"\n" + body)),
             "error": error,
+            "via": self._via(flow.client_conn),
         })
 
     def response(self, flow) -> None:
@@ -65,6 +78,7 @@ class Recorder:
             "path": flow.request.path[:300],
             "bytes_out": len(msg.content),
             "canaries": sorted(self.matcher.scan(msg.content)),
+            "via": self._via(flow.client_conn),
         })
 
     def tls_failed_client(self, data) -> None:
@@ -77,6 +91,7 @@ class Recorder:
             "host": host,
             "port": server.address[1] if server.address else None,
             "error": data.conn.error,
+            "via": self._via(data.conn),
         })
 
 

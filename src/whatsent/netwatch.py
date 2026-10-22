@@ -6,6 +6,7 @@ connections can be missed. It catches tools that ignore proxy settings.
 
 from __future__ import annotations
 
+import socket
 import threading
 
 import psutil
@@ -16,7 +17,7 @@ class ConnectionSampler:
         self.pid = pid
         self.proxy_port = proxy_port
         self.interval = interval
-        self.seen: dict[tuple[str, int], dict] = {}
+        self.seen: dict[tuple[str, int, str], dict] = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -50,10 +51,11 @@ class ConnectionSampler:
                     continue
                 if c.raddr.port == self.proxy_port and _is_loopback(c.raddr.ip):
                     continue
-                key = (c.raddr.ip, c.raddr.port)
+                proto = "udp" if c.type == socket.SOCK_DGRAM else "tcp"
+                key = (c.raddr.ip, c.raddr.port, proto)
                 if key not in self.seen:
-                    self.seen[key] = {"ip": c.raddr.ip, "port": c.raddr.port, "process": name,
-                                      "local": _is_loopback(c.raddr.ip)}
+                    self.seen[key] = {"ip": c.raddr.ip, "port": c.raddr.port, "proto": proto,
+                                      "process": name, "local": _is_loopback(c.raddr.ip)}
 
 
 def _is_loopback(ip: str) -> bool:

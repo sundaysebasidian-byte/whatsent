@@ -1,0 +1,121 @@
+"""Launch desktop (Electron) IDE agents such as Cursor or Trae under whatsent.
+
+Electron apps ignore HTTPS_PROXY for most of their traffic, so we start the app's
+own binary with Chromium's proxy switches. ``--ignore-certificate-errors`` makes
+the app accept whatsent's certificate; this is safe for the run because the only
+TLS the app then talks to is whatsent's local proxy, and mitmproxy itself still
+verifies the real servers' certificates. Extension hosts are Node processes and
+get the usual proxy variables plus NODE_EXTRA_CA_CERTS.
+"""
+
+from __future__ import annotations
+
+import os
+import plistlib
+import shutil
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import psutil
+
+
+@dataclass(frozen=True)
+class AppInfo:
+    name: str
+    mac_bundles: tuple[str, ...]
+    linux_bins: tuple[str, ...]
+
+
+# Bundle and binary names. Ones we have not seen on a real machine simply fail to
+# resolve, and the user can pass the path instead.
+KNOWN = {
+    "cursor": AppInfo("Cursor", ("Cursor.app",), ("cursor",)),
+    "windsurf": AppInfo("Windsurf", ("Windsurf.app",), ("windsurf",)),
+    "trae": AppInfo("Trae", ("Trae.app",), ("trae",)),
+    "trae-cn": AppInfo("Trae CN", ("Trae CN.app",), ("trae-cn",)),
+    "kiro": AppInfo("Kiro", ("Kiro.app",), ("kiro",)),
+    "qoder": AppInfo("Qoder", ("Qoder.app",), ("qoder",)),
+    "codebuddy": AppInfo("CodeBuddy", ("CodeBuddy.app", "CodeBuddy CN.app"), ("codebuddy",)),
+    "vscode": AppInfo("VS Code", ("Visual Studio Code.app",), ("code",)),
+}
+
+
+@dataclass
+class ResolvedApp:
+    name: str
+    executable: Path
+
+
+class AppError(Exception):
+    pass
+
+
+def resolve(spec: str) -> ResolvedApp:
+    """``spec`` is a known name (cursor, trae, ...), a .app bundle or an executable path."""
+    path = Path(spec).expanduser()
+    if path.suffix == ".app" and path.is_dir():
+        return ResolvedApp(path.stem, _bundle_executable(path))
+    if path.is_file() and os.access(path, os.X_OK):
+        return ResolvedApp(path.name, _real_binary(path))
+    info = KNOWN.get(spec.lower())
+    if info is None:
+        raise AppError(f"unknown app {spec!r}. Known: {', '.join(sorted(KNOWN))}; or pass a path "
+                       f"to the .app bundle or executable")
+    if sys.platform == "darwin":
+        for folder in (Path("/Applications"), Path.home() / "Applications"):
+            for bundle in info.mac_bundles:
+                if (folder / bundle).is_dir():
+                    return ResolvedApp(info.name, _bundle_executable(folder / bundle))
+    else:
+        for name in info.linux_bins:
+            found = shutil.which(name)
+            if found:
+                return ResolvedApp(info.name, _real_binary(Path(found)))
+    raise AppError(f"could not find {info.name}. Pass its path instead, e.g. --app /Applications/X.app")
+
+
+def _bundle_executable(bundle: Path) -> Path:
+    plist = bundle / "Contents" / "Info.plist"
+    try:
+        with open(plist, "rb") as f:
+            exe = plistlib.load(f)["CFBundleExecutable"]
+    except (OSError, KeyError, plistlib.InvalidFileException) as exc:
+        raise AppError(f"{bundle} does not look like an app bundle: {exc}") from exc
+    return bundle / "Contents" / "MacOS" / exe
+
+
+def _real_binary(path: Path) -> Path:
+    """Linux launchers like /usr/bin/code are scripts that start the app detached and
+    exit at once. Prefer the Electron binary next to them (<dir>/bin/code -> <dir>/code)."""
+    real = path.resolve()
+    if real.parent.name == "bin":
+        candidate = real.parent.parent / real.name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return real
+
+
+def running(app: ResolvedApp) -> list[int]:
+    """PIDs of an already running copy. Electron apps hand a second launch over to the
+    running instance, which would then run outside whatsent."""
+    pids = []
+    for proc in psutil.process_iter(["exe"]):
+        try:
+            exe = proc.info["exe"]
+        except psutil.Error:
+            continue
+        if exe and Path(exe) == app.executable:
+            pids.append(proc.pid)
+    return pids
+
+
+def command(app: ResolvedApp, proxy_port: int, workspace: Path, extra: list[str]) -> list[str]:
+    return [
+        str(app.executable),
+        f"--proxy-server=http://127.0.0.1:{proxy_port}",
+        "--ignore-certificate-errors",
+        "--disable-quic",  # QUIC/HTTP3 is UDP and would skip the proxy
+        *extra,
+        str(workspace),
+    ]
