@@ -13,6 +13,16 @@ whatsent run -- claude         # 命令行 Agent
 whatsent run --app cursor      # IDE 类 Agent
 ```
 
+Windows 上在 PowerShell 里运行（需要 [Python 3.10+](https://www.python.org/downloads/windows/) 和 [Git](https://git-scm.com/download/win)）：
+
+```powershell
+py -m pip install --user pipx; py -m pipx ensurepath   # 只需一次，之后重开一个终端
+pipx install git+https://github.com/sundaysebasidian-byte/whatsent
+whatsent demo
+whatsent run -- claude
+whatsent run --app cursor
+```
+
 [English](README.md) · [测评榜](https://sundaysebasidian-byte.github.io/whatsent/) · [示例报告](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html)
 
 ## 为什么做这个
@@ -47,9 +57,10 @@ Agent 启动前 whatsent 会打印一句建议的任务提示。对比多个 Age
 ```bash
 whatsent run --app cursor                    # 还支持：trae、trae-cn、windsurf、kiro、qoder、codebuddy、vscode
 whatsent run --app "/Applications/Some IDE.app"
+whatsent run --app "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe"   # Windows：传 .exe 路径
 ```
 
-先把这个 App 完全退出：再次启动会被交给已经在运行的那个实例，whatsent 就看不到了。whatsent 会直接启动 App 自己的程序，打开金丝雀项目，并加上 Chromium 的 `--proxy-server`、`--ignore-certificate-errors`、`--disable-quic` 参数。忽略证书错误只在这次运行生效，而且 App 只会收到 whatsent 本地代理出示的证书；mitmproxy 自己仍会校验真实服务器的证书。在 AI 对话里输入建议的任务，等它做完，再退出 App（Cmd+Q）。
+先把这个 App 完全退出：再次启动会被交给已经在运行的那个实例，whatsent 就看不到了。whatsent 会直接启动 App 自己的程序，打开金丝雀项目，并加上 Chromium 的 `--proxy-server`、`--ignore-certificate-errors`、`--disable-quic` 参数。忽略证书错误只在这次运行生效，而且 App 只会收到 whatsent 本地代理出示的证书；mitmproxy 自己仍会校验真实服务器的证书。在 AI 对话里输入建议的任务，等它做完，再退出 App（Cmd+Q；Windows 上用 文件 > 退出）。
 
 ### 不走代理的流量（实验性）
 
@@ -58,7 +69,7 @@ whatsent run --capture local -- some-agent
 whatsent run --app trae --capture local:Trae
 ```
 
-`--capture local` 会加上 mitmproxy 的本地抓包模式（local mode），在系统层把匹配进程的流量导到代理。macOS 第一次会请你允许 mitmproxy 的系统扩展；Linux 需要 root。用这种方式抓到的域名会在报告里标为 "ignored proxy, caught at OS level"（无视代理设置、在系统层抓到）。如果系统层抓包没能启动，报告会明确提示，而不是显示成干净。
+`--capture local` 会加上 mitmproxy 的本地抓包模式（local mode），在系统层把匹配进程的流量导到代理。macOS 第一次会请你允许 mitmproxy 的系统扩展；Linux 需要 root；Windows 需要用管理员身份打开的终端。用这种方式抓到的域名会在报告里标为 "ignored proxy, caught at OS level"（无视代理设置、在系统层抓到）。如果系统层抓包没能启动，报告会明确提示，而不是显示成干净。
 
 ### 参数
 
@@ -73,7 +84,7 @@ whatsent run --app trae --capture local:Trae
 | `--port N` | 固定代理端口 |
 | `--mitm-set KEY=VALUE` | 透传 mitmproxy 选项，例如 `mode=upstream:http://corp-proxy:8080` |
 
-默认监控 `~/.claude`、`~/.codex`、`~/.gemini`、`~/.cursor`、`~/.trae` 等 Agent 目录；Linux 上另加 `~/.cache`、`~/.config`、`~/.local/share` 和临时目录，macOS 上另加 `~/Library/Caches` 和 `~/Library/Application Support`。浏览器缓存等嘈杂目录会跳过。
+默认监控 `~/.claude`、`~/.codex`、`~/.gemini`、`~/.cursor`、`~/.trae` 等 Agent 目录；Linux 上另加 `~/.cache`、`~/.config`、`~/.local/share` 和临时目录，macOS 上另加 `~/Library/Caches` 和 `~/Library/Application Support`，Windows 上另加 `%APPDATA%` 和 `%LOCALAPPDATA%`（临时目录也在里面）。浏览器缓存等嘈杂目录会跳过。
 
 ## 怎么看报告
 
@@ -90,14 +101,15 @@ whatsent run --app trae --capture local:Trae
 
 ## 环境要求
 
-- macOS 或 Linux，Python 3.10 及以上（macOS 自带 Python 太旧，请用 Homebrew 的 Python、`pipx` 或 `uv tool install`）。
+- macOS、Linux 或 Windows 10/11，Python 3.10 及以上（macOS 自带 Python 太旧，请用 Homebrew 的 Python、`pipx` 或 `uv tool install`）。
 - 要测试的 Agent 已安装并登录。
 
 ## 已知局限
 
 - 不加 `--capture local` 时，只能解密遵守代理设置的流量。做了证书锁定或自带信任库的工具会列在"未能检查"里，不做内容分析。
 - IDE 支持依赖 Electron 遵守 `--proxy-server`、扩展进程遵守 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`。目前只用替身程序测过，还没用真实的 Cursor 或 Trae 测过。除了你直接传路径，内置的 App 名称不一定和你的安装一致。
-- `--capture local` 还没在真实 Mac 上测过；Linux 下需要 root 和 eBPF。
+- `--capture local` 还没在真实 Mac 和 Windows 电脑上测过；Linux 下需要 root 和 eBPF。
+- Windows 版在 CI 里测过（演示和替身 IDE），还没用真实 Agent 测过。各 IDE 在 Windows 上的安装路径是按常见位置猜的；`--app 名称` 找不到时请直接传 `.exe` 路径。
 - 连接采样每 0.2 秒一次，极短的直连可能漏掉。
 - 加密上传只能看到目的地和大小，看不到内容。落盘监控只有在工具把数据暂存在被监控目录时才有用。
 - 落盘监控会标出被监控目录里所有新出现的大文件，包括运行期间其他程序写的。运行时间尽量短，其他应用尽量别动。
@@ -106,7 +118,7 @@ whatsent run --app trae --capture local:Trae
 ## 开发
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate   # Windows PowerShell: py -m venv .venv; .venv\Scripts\Activate.ps1
 pip install -e ".[test]"
 pytest
 ```

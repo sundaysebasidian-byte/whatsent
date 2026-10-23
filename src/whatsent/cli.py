@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -32,11 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="folder for reports (default: ./whatsent-report)")
     run.add_argument("--app", metavar="NAME|PATH",
                      help=f"desktop IDE agent to launch: {', '.join(sorted(apps.KNOWN))}, a .app bundle "
-                          f"or an executable")
+                          f"or an executable (.exe on Windows)")
     run.add_argument("--capture", default="env", metavar="MODE",
                      help="env (default): proxy settings only. local or local:SPEC: also capture at OS level "
                           "the traffic of processes matching SPEC (experimental; macOS asks to allow a "
-                          "system extension, Linux needs root)")
+                          "system extension, Linux needs root, Windows an admin terminal)")
     run.add_argument("--port", type=int, help="proxy port (default: a free port)")
     run.add_argument("--watch", type=Path, action="append", default=[], metavar="DIR",
                      help="extra folder to watch for files the agent writes (repeatable)")
@@ -99,11 +100,11 @@ def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | No
 
     canaries = [c.to_dict() for c in canary.create_workspace(workspace)]
     canaries_file = run_dir / "canaries.json"
-    canaries_file.write_text(json.dumps(canaries, indent=2))
+    canaries_file.write_text(json.dumps(canaries, indent=2), encoding="utf-8")
     matcher = Matcher({c["id"]: c["token"] for c in canaries})
 
     roots = ([] if args.no_default_watch else diskwatch.default_roots()) + [w.resolve() for w in args.watch]
-    print(f"whatsent: snapshotting {len(roots)} folders…", file=sys.stderr)
+    print(f"whatsent: snapshotting {len(roots)} folders...", file=sys.stderr)
     before, truncated = diskwatch.snapshot(roots, exclude=[run_dir])
 
     capture = getattr(args, "capture", "env")
@@ -139,8 +140,14 @@ whatsent: {how}
     old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     exit_code: int | str
     try:
-        agent = subprocess.Popen(command, cwd=workspace, env=env,
-                                 preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        if sys.platform == "win32":
+            # Windows children get Ctrl-C regardless of our handler, and only PATH lookup of
+            # .exe is built in, so resolve npm-style shims such as claude.cmd ourselves.
+            agent = subprocess.Popen([shutil.which(command[0]) or command[0], *command[1:]],
+                                     cwd=workspace, env=env)
+        else:
+            agent = subprocess.Popen(command, cwd=workspace, env=env,
+                                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     except OSError as exc:
         signal.signal(signal.SIGINT, old_sigint)
         proxy.stop()
@@ -166,7 +173,7 @@ whatsent: {how}
     if problem:
         warnings.append(problem)
 
-    print("whatsent: checking watched folders…", file=sys.stderr)
+    print("whatsent: checking watched folders...", file=sys.stderr)
     after, truncated_after = diskwatch.snapshot(roots, exclude=[run_dir])
     disk = diskwatch.diff(before, after, matcher)
     disk["roots"] = [str(r) for r in roots]

@@ -16,10 +16,10 @@ def test_demo_end_to_end(tmp_path):
     assert main(["demo", "--out", str(out)]) == 0
 
     (run_dir,) = out.iterdir()
-    s = json.loads((run_dir / "report.json").read_text())
+    s = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
     by_id = {c["id"]: c for c in s["canaries"]}
     assert s["agent"] == AGENT_NAME and s["sample"] is True
-    assert json.loads((run_dir / "result.json").read_text())["sample"] is True
+    assert json.loads((run_dir / "result.json").read_text(encoding="utf-8"))["sample"] is True
 
     assert by_id["dotenv"]["sent_to"] == [HOSTS["telemetry"]]  # plain HTTP
     assert by_id["task_file"]["sent_to"] == [HOSTS["api"]]  # HTTPS + gzip, decrypted via our CA
@@ -36,6 +36,6 @@ def test_demo_end_to_end(tmp_path):
     assert any(g["host"] == HOSTS["pinned"] for g in s["not_inspected"]["tls_failed"])
     assert any(c["local"] for c in s["not_inspected"]["direct_connections"])
 
-    html = (run_dir / "report.html").read_text()
+    html = (run_dir / "report.html").read_text(encoding="utf-8")
     assert "canaries left this machine" in html and AGENT_NAME in html
     assert by_id["dotenv"]["token"] not in html  # report never prints the planted values

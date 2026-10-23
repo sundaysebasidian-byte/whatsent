@@ -37,6 +37,16 @@ def test_resolve_prefers_binary_next_to_launcher_script(tmp_path):
     assert apps.resolve(str(tmp_path / "bin" / "fakeide")).executable == tmp_path / "fakeide"
 
 
+def test_resolve_known_app_on_windows(tmp_path, monkeypatch):
+    exe = tmp_path / "Programs" / "cursor" / "Cursor.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    assert apps.resolve("cursor") == apps.ResolvedApp("Cursor", exe)
+
+
 def test_resolve_unknown_name():
     with pytest.raises(apps.AppError, match="unknown app"):
         apps.resolve("definitely-not-an-ide")
@@ -81,15 +91,19 @@ def test_run_app_end_to_end(tmp_path, monkeypatch):
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Sink)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    fake = tmp_path / "fakeide"
-    fake.write_text(f"#!{sys.executable}\n" + Path(__file__).with_name("fake_app.py").read_text())
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    if sys.platform == "win32":  # no shebangs: a .cmd shim stands in for the .exe
+        fake = tmp_path / "fakeide.cmd"
+        fake.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_app.py")}" %*\n')
+    else:
+        fake = tmp_path / "fakeide"
+        fake.write_text(f"#!{sys.executable}\n" + Path(__file__).with_name("fake_app.py").read_text())
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("FAKE_APP_URL", f"http://127.0.0.1:{srv.server_address[1]}/v1/chat")
 
     out = tmp_path / "out"
     assert main(["run", "--out", str(out), "--no-default-watch", "--app", str(fake)]) == 0
     (run_dir,) = out.iterdir()
-    s = json.loads((run_dir / "report.json").read_text())
+    s = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
     assert s["agent"] == "fakeide" and s["kind"] == "app"
     assert {c["id"]: c for c in s["canaries"]}["task_file"]["sent_to"] == ["127.0.0.1"]
     assert any("exited after" in w for w in s["warnings"])  # quick exit looks like a hand-over

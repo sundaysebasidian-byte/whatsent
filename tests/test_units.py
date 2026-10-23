@@ -36,7 +36,7 @@ def test_workspace_plants_unique_tokens(tmp_path):
         if c.id == "file_name":
             assert (tmp_path / c.file).exists() and c.token in c.file
         elif c.id != "git_history":
-            assert c.token in (tmp_path / c.file).read_text()
+            assert c.token in (tmp_path / c.file).read_text(encoding="utf-8")
 
 
 def test_diskwatch_diff(tmp_path):
@@ -70,7 +70,7 @@ def test_report_escapes_and_summarizes(tmp_path):
     assert s["totals"] == {"canaries": 1, "leaked": 1, "leaked_sensitive": 1, "requests": 2,
                            "hosts": 2, "bytes_out": 2058, "not_inspected": 1, "copied_to_disk": 0}
     assert s["destinations"][0]["host"] == "<script>x</script>"
-    html = report.write(s, tmp_path).read_text()
+    html = report.write(s, tmp_path).read_text(encoding="utf-8")
     assert "<script>x</script>" not in html and "&lt;script&gt;" in html
     assert "pinned.example.com" in html and TOKEN not in html
 

@@ -60,7 +60,7 @@ def collect(paths: list[Path]) -> list[dict]:
     out = []
     for f in files:
         try:
-            out.append(to_result(json.loads(f.read_text())))
+            out.append(to_result(json.loads(f.read_text(encoding="utf-8"))))
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             print(f"whatsent: skipping {f}: {exc}", file=sys.stderr)
     return out
@@ -179,7 +179,7 @@ result.json holds only these aggregates: no paths, prompts or file contents.</p>
 def build(paths: list[Path], out: Path) -> int:
     rows = sorted(latest_per_agent(collect(paths)), key=rank_key)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "leaderboard.json").write_text(json.dumps({"schema": SCHEMA, "results": rows}, indent=2))
-    (out / "index.html").write_text(render(rows))
+    (out / "leaderboard.json").write_text(json.dumps({"schema": SCHEMA, "results": rows}, indent=2), encoding="utf-8")
+    (out / "index.html").write_text(render(rows), encoding="utf-8")
     print(f"whatsent: {len(rows)} agents -> {out / 'index.html'}", file=sys.stderr)
     return 0

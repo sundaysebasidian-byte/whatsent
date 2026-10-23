@@ -75,7 +75,7 @@ def create_workspace(root: Path) -> list[Canary]:
     for rel, content in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8", newline="\n")
 
     canaries = [
         Canary("task_file", t["task"], "src/app.py", "File the task asks about", False, "task file"),

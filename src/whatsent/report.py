@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict
 from html import escape
 from pathlib import Path
@@ -11,7 +12,7 @@ from pathlib import Path
 def load_events(path: Path) -> list[dict]:
     events = []
     if path.exists():
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 try:
                     events.append(json.loads(line))
@@ -87,8 +88,10 @@ def redact_home(obj, home: Path):
     """Show paths under the home folder as ~/..., so reports can be shared without the user name.
 
     Only whole path prefixes are replaced. Both the given and the resolved home count, since
-    macOS reports /var/... and /private/var/... for the same folder."""
-    prefixes = sorted({str(home).rstrip("/"), str(Path(home).resolve()).rstrip("/")}, key=len, reverse=True)
+    macOS reports /var/... and /private/var/... for the same folder. Windows paths come out
+    as ~/... too, so shared reports look the same on every platform."""
+    seps = "/" + os.sep
+    prefixes = sorted({str(home).rstrip(seps), str(Path(home).resolve()).rstrip(seps)}, key=len, reverse=True)
     prefixes = [p for p in prefixes if len(p) > 1]
 
     def walk(x):
@@ -96,8 +99,8 @@ def redact_home(obj, home: Path):
             for p in prefixes:
                 if x == p:
                     return "~"
-                if x.startswith(p + "/"):
-                    return "~" + x[len(p):]
+                if x.startswith(p) and x[len(p):len(p) + 1] in seps:
+                    return "~" + x[len(p):].replace(os.sep, "/")
             return x
         if isinstance(x, list):
             return [walk(v) for v in x]
@@ -111,11 +114,11 @@ def redact_home(obj, home: Path):
 def write(summary: dict, out_dir: Path) -> Path:
     from whatsent.board import to_result  # board imports this module
 
-    (out_dir / "report.json").write_text(json.dumps(summary, indent=2))
+    (out_dir / "report.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     # The shareable subset (no paths, commands or canary values), for the leaderboard.
-    (out_dir / "result.json").write_text(json.dumps(to_result(summary), indent=2))
+    (out_dir / "result.json").write_text(json.dumps(to_result(summary), indent=2), encoding="utf-8")
     html_path = out_dir / "report.html"
-    html_path.write_text(render_html(summary))
+    html_path.write_text(render_html(summary), encoding="utf-8")
     return html_path
 
 

@@ -13,6 +13,16 @@ whatsent run -- claude         # a CLI agent
 whatsent run --app cursor      # an IDE agent
 ```
 
+On Windows, in PowerShell (needs [Python 3.10+](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/download/win)):
+
+```powershell
+py -m pip install --user pipx; py -m pipx ensurepath   # once, then open a new terminal
+pipx install git+https://github.com/sundaysebasidian-byte/whatsent
+whatsent demo
+whatsent run -- claude
+whatsent run --app cursor
+```
+
 [中文说明](README_zh.md) · [Leaderboard](https://sundaysebasidian-byte.github.io/whatsent/) · [Sample report](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html)
 
 ## Why
@@ -47,9 +57,10 @@ whatsent prints a suggested prompt before the agent starts. Use the same prompt 
 ```bash
 whatsent run --app cursor                    # also: trae, trae-cn, windsurf, kiro, qoder, codebuddy, vscode
 whatsent run --app "/Applications/Some IDE.app"
+whatsent run --app "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe"   # Windows: path to the .exe
 ```
 
-Quit the app completely first: a second launch is handed to the running copy, which whatsent cannot see. whatsent starts the app's own binary with the canary project open and Chromium's `--proxy-server`, `--ignore-certificate-errors` and `--disable-quic` switches. The certificate switch only affects this run, and only whatsent's local proxy ever presents a certificate to the app; mitmproxy still verifies the real servers' certificates. Ask the AI chat the suggested prompt, wait for it to finish, then quit the app (Cmd+Q).
+Quit the app completely first: a second launch is handed to the running copy, which whatsent cannot see. whatsent starts the app's own binary with the canary project open and Chromium's `--proxy-server`, `--ignore-certificate-errors` and `--disable-quic` switches. The certificate switch only affects this run, and only whatsent's local proxy ever presents a certificate to the app; mitmproxy still verifies the real servers' certificates. Ask the AI chat the suggested prompt, wait for it to finish, then quit the app (Cmd+Q, or File > Exit on Windows).
 
 ### Traffic that ignores proxy settings (experimental)
 
@@ -58,7 +69,7 @@ whatsent run --capture local -- some-agent
 whatsent run --app trae --capture local:Trae
 ```
 
-`--capture local` adds mitmproxy's local capture mode, which redirects the traffic of matching processes at OS level. On macOS this asks you once to allow mitmproxy's system extension; on Linux it needs root. Hosts reached this way are marked "ignored proxy, caught at OS level" in the report. If the capture fails to start, the report says so instead of looking clean.
+`--capture local` adds mitmproxy's local capture mode, which redirects the traffic of matching processes at OS level. On macOS this asks you once to allow mitmproxy's system extension; on Linux it needs root; on Windows, run it from an administrator terminal. Hosts reached this way are marked "ignored proxy, caught at OS level" in the report. If the capture fails to start, the report says so instead of looking clean.
 
 ### Options
 
@@ -73,7 +84,7 @@ whatsent run --app trae --capture local:Trae
 | `--port N` | Fixed proxy port |
 | `--mitm-set KEY=VALUE` | Pass an option to mitmproxy, e.g. `mode=upstream:http://corp-proxy:8080` |
 
-By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.trae`, plus `~/.cache`, `~/.config`, `~/.local/share` and the temp folder on Linux, and `~/Library/Caches` and `~/Library/Application Support` on macOS. Busy browser caches are skipped.
+By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.trae`, plus `~/.cache`, `~/.config`, `~/.local/share` and the temp folder on Linux, `~/Library/Caches` and `~/Library/Application Support` on macOS, and `%APPDATA%` and `%LOCALAPPDATA%` (which holds the temp folder) on Windows. Busy browser caches are skipped.
 
 ## Reading the report
 
@@ -90,14 +101,15 @@ Until real results are submitted, the board shows made-up examples of fictional 
 
 ## Requirements
 
-- macOS or Linux, Python 3.10+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
+- macOS, Linux or Windows 10/11, Python 3.10+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
 - The agent you want to test, already installed and logged in.
 
 ## Known limitations
 
 - Without `--capture local`, only traffic that honours proxy settings is decrypted. Tools that pin certificates or ship their own trust store are listed under "Not inspected", not analysed.
 - IDE support relies on Electron honouring `--proxy-server` and the extension host honouring `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`. It has been tested with a stand-in app, not yet with real Cursor or Trae. App names other than the path you pass may not match your install.
-- `--capture local` has not yet been tested on a real Mac; the Linux path needs root and eBPF.
+- `--capture local` has not yet been tested on a real Mac or Windows PC; the Linux path needs root and eBPF.
+- Windows support is tested in CI (the demo and the stand-in IDE), not yet with real agents. The Windows install paths of the IDEs are best guesses; if `--app NAME` does not find yours, pass the `.exe` path.
 - The socket sampler checks every 0.2 s, so very short direct connections can be missed.
 - Encrypted uploads can only be measured (destination and size), not read. The disk watch helps only if the tool stages the data in a watched folder.
 - Disk watch flags any new large file in watched folders, including ones other programs wrote during the run. Keep runs short and other apps quiet.
@@ -106,7 +118,7 @@ Until real results are submitted, the board shows made-up examples of fictional 
 ## Development
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate   # Windows PowerShell: py -m venv .venv; .venv\Scripts\Activate.ps1
 pip install -e ".[test]"
 pytest
 ```

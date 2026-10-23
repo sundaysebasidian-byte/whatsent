@@ -21,7 +21,7 @@ AGENT_DIRS = [".claude", ".codex", ".gemini", ".aider", ".zcode", ".trae", ".cur
               ".qoder", ".kimi", ".codebuddy", ".continue", ".opencode", ".grok"]
 # Busy directories that change on their own and only add noise.
 NOISY = ("/Google/Chrome", "/Mozilla", "/BraveSoftware", "/Microsoft Edge", "/com.apple.",
-         "/Safari", "/Slack", "/Spotify", "/pip/http")
+         "/Safari", "/Slack", "/Spotify", "/pip/http", "/Microsoft/Edge", "/Microsoft/Windows")
 
 
 def default_roots() -> list[Path]:
@@ -29,6 +29,8 @@ def default_roots() -> list[Path]:
     roots = [home / d for d in AGENT_DIRS]
     if sys.platform == "darwin":
         roots += [home / "Library/Caches", home / "Library/Application Support"]
+    if sys.platform == "win32":
+        roots += [Path(os.environ[v]) for v in ("APPDATA", "LOCALAPPDATA") if os.environ.get(v)]
     roots += [home / ".cache", home / ".config", home / ".local/share", home / ".local/state",
               Path(tempfile.gettempdir())]
     return [r for r in roots if r.is_dir()]
@@ -65,7 +67,7 @@ def snapshot(roots: list[Path], exclude: list[Path]) -> tuple[Snapshot, list[str
 def _skip(dirpath: str, excluded: list[str]) -> bool:
     real = os.path.realpath(dirpath)
     return any(real == e or real.startswith(e + os.sep) for e in excluded) or any(
-        n in dirpath for n in NOISY
+        n in dirpath.replace(os.sep, "/") for n in NOISY
     )
 
 
