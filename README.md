@@ -9,6 +9,7 @@
 ```bash
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent   # or: uv tool install git+https://...
 whatsent demo                  # 10-second offline demo, no agent needed
+whatsent ui                    # the same, in a local web app: pick a tool, watch it live
 whatsent run -- claude         # a CLI agent
 whatsent run --app cursor      # an IDE agent
 ```
@@ -19,6 +20,7 @@ On Windows, in PowerShell (needs [Python 3.10+](https://www.python.org/downloads
 py -m pip install --user pipx; py -m pipx ensurepath   # once, then open a new terminal
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent
 whatsent demo
+whatsent ui
 whatsent run -- claude
 whatsent run --app cursor
 ```
@@ -40,6 +42,14 @@ whatsent is an audit tool, not a firewall. It does not block anything.
 5. **Report.** A single `report.html` (plus `report.json` and a shareable `result.json`) in `./whatsent-report/<timestamp>/`. Your home folder is shown as `~`.
 
 ## Usage
+
+### Web app
+
+```bash
+whatsent ui                                  # opens http://127.0.0.1:<port>/ in your browser
+```
+
+Pick an installed agent or IDE, follow the steps, and watch requests and canaries arrive live; the report opens when the agent exits and can be saved as an image. CLI agents open in a new terminal window; IDEs are relaunched in test mode, as below. The server only listens on 127.0.0.1 and needs no internet. Press Ctrl+C to stop it.
 
 ### CLI agents
 

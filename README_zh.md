@@ -9,6 +9,7 @@
 ```bash
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent   # 或：uv tool install git+https://...
 whatsent demo                  # 10 秒离线演示，不需要装 Agent
+whatsent ui                    # 本地网页界面：选工具、实时看它发了什么
 whatsent run -- claude         # 命令行 Agent
 whatsent run --app cursor      # IDE 类 Agent
 ```
@@ -19,6 +20,7 @@ Windows 上在 PowerShell 里运行（需要 [Python 3.10+](https://www.python.o
 py -m pip install --user pipx; py -m pipx ensurepath   # 只需一次，之后重开一个终端
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent
 whatsent demo
+whatsent ui
 whatsent run -- claude
 whatsent run --app cursor
 ```
@@ -40,6 +42,14 @@ whatsent 是审计工具，不是防火墙，不拦截任何东西。
 5. **报告**：在 `./whatsent-report/<时间>/` 下生成单文件 `report.html`，附 `report.json` 和可公开分享的 `result.json`。报告里你的用户目录显示为 `~`。
 
 ## 用法
+
+### 网页界面
+
+```bash
+whatsent ui                                  # 在浏览器里打开 http://127.0.0.1:<端口>/
+```
+
+选一个本机装好的 Agent 或 IDE，按步骤走，请求和金丝雀会实时出现；Agent 退出后自动出报告，可以导出成图片。命令行 Agent 会在新终端窗口里打开，IDE 按下文的测试模式重启。服务只监听 127.0.0.1，不需要联网。按 Ctrl+C 退出。
 
 ### 命令行 Agent
 
