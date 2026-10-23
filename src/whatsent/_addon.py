@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from whatsent.detect import Matcher
+from whatsent.detect import Matcher, expand
 
 
 class Recorder:
@@ -41,7 +41,15 @@ class Recorder:
 
     def _http(self, flow, error: str | None = None) -> None:
         req = flow.request
-        body = req.get_content(strict=False) or b""
+        undecoded = None
+        try:
+            body = req.get_content() or b""  # undoes Content-Encoding: gzip, br, zstd...
+        except ValueError:
+            # Unknown or broken encoding. The matcher still unpacks what it can from the raw
+            # bytes; if that finds nothing to unpack, the report lists the host as not inspected.
+            body = req.raw_content or b""
+            if len(expand(body, depth=1)) == 1:
+                undecoded = req.headers.get("content-encoding", "?")
         head = f"{req.method} {req.url}\n".encode() + b"\n".join(
             k.encode() + b": " + v.encode() for k, v in req.headers.items(multi=True)
         )
@@ -58,6 +66,7 @@ class Recorder:
             "bytes_in": len(resp.raw_content or b"") if resp else 0,
             "canaries": sorted(self.matcher.scan(head + b"\n" + body)),
             "error": error,
+            "undecoded": undecoded,
             "via": self._via(flow.client_conn),
         })
 
