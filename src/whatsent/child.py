@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     Path(spec["pidfile"]).write_text(str(os.getpid()), encoding="utf-8")
     env = {**os.environ, **spec["env"]}
     command = spec["command"]
-    print(f"whatsent: recording {spec.get('name', command[0])}. Paste this prompt, then exit the agent:\n\n"
+    print(f"whatsent: recording {spec.get('name', command[0])}. Paste this prompt, let the agent finish, then exit it:\n\n"
           f"    {spec.get('prompt', '')}\n", flush=True)
     try:
         code = subprocess.call([shutil.which(command[0], path=env.get("PATH")) or command[0], *command[1:]],

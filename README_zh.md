@@ -54,7 +54,7 @@ whatsent ui                                  # 在浏览器里打开 http://127.
 ### 命令行 Agent
 
 ```bash
-whatsent run -- claude                       # 交互式：输入提示的任务，完成后退出 Agent
+whatsent run -- claude                       # 交互式：输入提示的任务，等 Agent 改好再退出
 whatsent run -- codex exec "Fix the bug in src/app.py so that add() returns the sum of its arguments."
 whatsent run -- gemini
 whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that add() returns the sum of its arguments."
@@ -98,6 +98,7 @@ whatsent run --app trae --capture local:Trae
 
 ## 怎么看报告
 
+- **灰色：结果没法确认 / 测试没做完**：任务文件（`src/app.py`，标记就在有 bug 的那一行）一定会发给模型，所以它是检验抓包是否有效的对照。如果没看到它发出，报告顶部会直接这样标出，而不是显示干净：要么 Agent 没做完任务（重测，等它改好再退出），要么它用 whatsent 读不了的方式发了出去。
 - **红色**：任务根本不需要的东西被发出去了（`.env`、凭据、git 历史）。
 - **橙色 / →**：普通项目文件被发出去了。把你让它改的文件发给模型是正常的；发了无关文件或目录列表，说明它上传的上下文有多宽。
 - **未能检查**：拒绝 whatsent 证书的域名（证书锁定）或绕开代理的连接。这一栏不为空时，"没有泄露"不能说明问题。

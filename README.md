@@ -54,7 +54,7 @@ Pick an installed agent or IDE, follow the steps, and watch requests and canarie
 ### CLI agents
 
 ```bash
-whatsent run -- claude                       # interactive: type the suggested prompt, then exit the agent
+whatsent run -- claude                       # interactive: type the suggested prompt, exit once the agent is done
 whatsent run -- codex exec "Fix the bug in src/app.py so that add() returns the sum of its arguments."
 whatsent run -- gemini
 whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that add() returns the sum of its arguments."
@@ -98,6 +98,7 @@ By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.g
 
 ## Reading the report
 
+- **Grey: not confirmed / incomplete**: the task file (`src/app.py`, with its marker on the buggy line) must reach the model, so it is the run's check that capture works. If it was never seen leaving, the report says so at the top instead of looking clean: either the agent did not finish the task (run again and exit only after it is done), or it sent the file in a form whatsent could not read.
 - **Red**: something no task needed left the machine (`.env`, credentials, git history).
 - **Amber / →**: ordinary project files left the machine. Sending the file you asked about to the model is expected; sending unrelated files or a directory listing tells you how much context the agent uploads.
 - **Not inspected**: hosts that rejected whatsent's certificate (certificate pinning) or connections that ignored the proxy. A clean report means nothing if this section is not empty.

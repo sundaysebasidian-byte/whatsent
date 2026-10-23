@@ -27,7 +27,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import psutil
 
-from whatsent import __version__, apps, canary
+from whatsent import __version__, apps, canary, report
 from whatsent.cli import Session, print_summary
 
 STATIC = Path(__file__).with_name("ui")
@@ -386,7 +386,7 @@ def report_view(s: dict, run_id: str) -> dict:
         "url": f"/runs/{run_id}/report.html",
         "agent": s["agent"], "started_at": s["started_at"], "duration_s": s["duration_s"],
         "sample": s.get("sample", False), "capture": s.get("capture", "env"), "warnings": s.get("warnings", []),
-        "totals": s["totals"],
+        "totals": s["totals"], "control": s.get("control"), "gap_names": report.gap_names(s),
         "canaries": [{k: c[k] for k in ("id", "file", "short", "sensitive", "sent_to")} | {"on_disk": bool(c["on_disk"])}
                      for c in s["canaries"]],
     }
