@@ -104,7 +104,7 @@ def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | No
     matcher = Matcher({c["id"]: c["token"] for c in canaries})
 
     roots = ([] if args.no_default_watch else diskwatch.default_roots()) + [w.resolve() for w in args.watch]
-    print(f"whatsent: snapshotting {len(roots)} folders…", file=sys.stderr)
+    print(f"whatsent: snapshotting {len(roots)} folders...", file=sys.stderr)
     before, truncated = diskwatch.snapshot(roots, exclude=[run_dir])
 
     capture = getattr(args, "capture", "env")
@@ -173,7 +173,7 @@ whatsent: {how}
     if problem:
         warnings.append(problem)
 
-    print("whatsent: checking watched folders…", file=sys.stderr)
+    print("whatsent: checking watched folders...", file=sys.stderr)
     after, truncated_after = diskwatch.snapshot(roots, exclude=[run_dir])
     disk = diskwatch.diff(before, after, matcher)
     disk["roots"] = [str(r) for r in roots]
