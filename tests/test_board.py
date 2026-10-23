@@ -28,11 +28,11 @@ def test_result_is_shareable():
 
 def test_board_from_examples(tmp_path):
     assert board.build([EXAMPLES], tmp_path) == 0
-    data = json.loads((tmp_path / "leaderboard.json").read_text())
+    data = json.loads((tmp_path / "leaderboard.json").read_text(encoding="utf-8"))
     names = [r["agent"] for r in data["results"]]
     assert names[0] == "Example Agent A" and names[-1] == "Example IDE E"  # clean first, most secrets last
     assert all(r["sample"] for r in data["results"])
-    html = (tmp_path / "index.html").read_text()
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert "Example data." in html and "not measurements of any real product" in html
 
 

@@ -59,10 +59,14 @@ class Proxy:
             cmd += ["--mode", f"local:{self.local_spec}"]
         for opt in self.mitm_options:
             cmd += ["--set", opt]
-        self.log = open(self.log_file, "w")
-        # Own session, so a Ctrl-C meant for the agent does not kill the proxy.
+        self.log = open(self.log_file, "w", encoding="utf-8")
+        # Own session (process group on Windows), so a Ctrl-C meant for the agent does not kill the proxy.
+        if sys.platform == "win32":
+            detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        else:
+            detach = {"start_new_session": True}
         self.proc = subprocess.Popen(cmd, env=env, stdout=self.log, stderr=subprocess.STDOUT,
-                                     stdin=subprocess.DEVNULL, start_new_session=True)
+                                     stdin=subprocess.DEVNULL, **detach)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
@@ -86,11 +90,11 @@ class Proxy:
 
     def local_capture_problem(self) -> str | None:
         """Best-effort check that OS-level capture actually started (it needs a macOS system
-        extension or root + eBPF on Linux, and fails quietly otherwise)."""
+        extension, root + eBPF on Linux or an admin terminal on Windows, and fails quietly otherwise)."""
         if not self.local_spec:
             return None
         try:
-            log = self.log_file.read_text(errors="replace")
+            log = self.log_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
         if re.search(r"(?i)redirector.*(fail|exited)|ebpf.*fail|local.*mode.*(error|fail)", log):
@@ -115,11 +119,11 @@ class Proxy:
         parts = []
         try:
             import certifi
-            parts.append(Path(certifi.where()).read_text())
+            parts.append(Path(certifi.where()).read_text(encoding="utf-8"))
         except ImportError:
             pass
-        parts.append(self.ca_cert.read_text())
-        path.write_text("\n".join(parts))
+        parts.append(self.ca_cert.read_text(encoding="utf-8"))
+        path.write_text("\n".join(parts), encoding="utf-8")
         return path
 
 

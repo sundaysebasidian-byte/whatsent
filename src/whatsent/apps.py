@@ -25,19 +25,21 @@ class AppInfo:
     name: str
     mac_bundles: tuple[str, ...]
     linux_bins: tuple[str, ...]
+    win_exes: tuple[str, ...] = ()  # relative to %LOCALAPPDATA%\Programs or %ProgramFiles%
 
 
 # Bundle and binary names. Ones we have not seen on a real machine simply fail to
 # resolve, and the user can pass the path instead.
 KNOWN = {
-    "cursor": AppInfo("Cursor", ("Cursor.app",), ("cursor",)),
-    "windsurf": AppInfo("Windsurf", ("Windsurf.app",), ("windsurf",)),
-    "trae": AppInfo("Trae", ("Trae.app",), ("trae",)),
-    "trae-cn": AppInfo("Trae CN", ("Trae CN.app",), ("trae-cn",)),
-    "kiro": AppInfo("Kiro", ("Kiro.app",), ("kiro",)),
-    "qoder": AppInfo("Qoder", ("Qoder.app",), ("qoder",)),
-    "codebuddy": AppInfo("CodeBuddy", ("CodeBuddy.app", "CodeBuddy CN.app"), ("codebuddy",)),
-    "vscode": AppInfo("VS Code", ("Visual Studio Code.app",), ("code",)),
+    "cursor": AppInfo("Cursor", ("Cursor.app",), ("cursor",), ("cursor/Cursor.exe",)),
+    "windsurf": AppInfo("Windsurf", ("Windsurf.app",), ("windsurf",), ("Windsurf/Windsurf.exe",)),
+    "trae": AppInfo("Trae", ("Trae.app",), ("trae",), ("Trae/Trae.exe",)),
+    "trae-cn": AppInfo("Trae CN", ("Trae CN.app",), ("trae-cn",), ("Trae CN/Trae CN.exe",)),
+    "kiro": AppInfo("Kiro", ("Kiro.app",), ("kiro",), ("Kiro/Kiro.exe",)),
+    "qoder": AppInfo("Qoder", ("Qoder.app",), ("qoder",), ("Qoder/Qoder.exe",)),
+    "codebuddy": AppInfo("CodeBuddy", ("CodeBuddy.app", "CodeBuddy CN.app"), ("codebuddy",),
+                         ("CodeBuddy/CodeBuddy.exe", "CodeBuddy CN/CodeBuddy CN.exe")),
+    "vscode": AppInfo("VS Code", ("Visual Studio Code.app",), ("code",), ("Microsoft VS Code/Code.exe",)),
 }
 
 
@@ -57,7 +59,7 @@ def resolve(spec: str) -> ResolvedApp:
     if path.suffix == ".app" and path.is_dir():
         return ResolvedApp(path.stem, _bundle_executable(path))
     if path.is_file() and os.access(path, os.X_OK):
-        return ResolvedApp(path.name, _real_binary(path))
+        return ResolvedApp(path.stem if sys.platform == "win32" else path.name, _real_binary(path))
     info = KNOWN.get(spec.lower())
     if info is None:
         raise AppError(f"unknown app {spec!r}. Known: {', '.join(sorted(KNOWN))}; or pass a path "
@@ -67,12 +69,20 @@ def resolve(spec: str) -> ResolvedApp:
             for bundle in info.mac_bundles:
                 if (folder / bundle).is_dir():
                     return ResolvedApp(info.name, _bundle_executable(folder / bundle))
+    elif sys.platform == "win32":
+        folders = [Path(os.environ[v]) / sub for v, sub in (("LOCALAPPDATA", "Programs"), ("ProgramFiles", ""))
+                   if os.environ.get(v)]
+        for folder in folders:
+            for exe in info.win_exes:
+                if (folder / exe).is_file():
+                    return ResolvedApp(info.name, folder / exe)
     else:
         for name in info.linux_bins:
             found = shutil.which(name)
             if found:
                 return ResolvedApp(info.name, _real_binary(Path(found)))
-    raise AppError(f"could not find {info.name}. Pass its path instead, e.g. --app /Applications/X.app")
+    example = r"%LOCALAPPDATA%\Programs\X\X.exe" if sys.platform == "win32" else "/Applications/X.app"
+    raise AppError(f"could not find {info.name}. Pass its path instead, e.g. --app {example}")
 
 
 def _bundle_executable(bundle: Path) -> Path:
