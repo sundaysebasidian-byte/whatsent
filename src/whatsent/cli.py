@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("demo", help="see a sample report: a simulated agent against local servers, offline")
     demo.add_argument("--out", type=Path, default=Path("whatsent-report"),
                       help="folder for reports (default: ./whatsent-report)")
+    ui = sub.add_parser("ui", help="open the visual interface in your browser (a local page on 127.0.0.1)")
+    ui.add_argument("--out", type=Path, default=Path("whatsent-report"),
+                    help="folder for reports (default: ./whatsent-report)")
+    ui.add_argument("--port", type=int, help="port for the local page (default: a free port)")
+    ui.add_argument("--no-browser", action="store_true", help="print the address instead of opening a browser")
     board = sub.add_parser("board", help="build the leaderboard page from report.json files")
     board.add_argument("reports", nargs="+", type=Path, help="report.json files or folders containing them")
     board.add_argument("-o", "--out", type=Path, default=Path("site"), help="output folder (default: ./site)")
@@ -62,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "demo":
         from whatsent.demo import run_demo
         return run_demo(args)
+    if args.cmd == "ui":
+        from whatsent.ui import run_ui
+        return run_ui(args)
     if args.cmd == "board":
         from whatsent.board import build
         return build(args.reports, args.out)
@@ -92,114 +101,189 @@ def run_app(args: argparse.Namespace, extra: list[str]) -> int:
 
 
 def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None) -> int:
-    started = datetime.now()
-    run_dir = (args.out / started.strftime("%Y%m%d-%H%M%S")).resolve()
-    workspace = run_dir / "workspace"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    warnings: list[str] = []
-
-    canaries = [c.to_dict() for c in canary.create_workspace(workspace)]
-    canaries_file = run_dir / "canaries.json"
-    canaries_file.write_text(json.dumps(canaries, indent=2), encoding="utf-8")
-    matcher = Matcher({c["id"]: c["token"] for c in canaries})
-
-    roots = ([] if args.no_default_watch else diskwatch.default_roots()) + [w.resolve() for w in args.watch]
-    print(f"whatsent: snapshotting {len(roots)} folders...", file=sys.stderr)
-    before, truncated = diskwatch.snapshot(roots, exclude=[run_dir])
-
-    capture = getattr(args, "capture", "env")
-    local_spec = None
-    if capture.startswith("local"):
-        local_spec = capture.partition(":")[2] or (app.executable.name if app else Path(command[0]).name)
-    proxy = Proxy(run_dir, canaries_file, run_dir / "events.jsonl", args.port, args.mitm_set,
-                  getattr(args, "proxy_env", None), local_spec)
+    session = Session(args, command, app)
+    print(f"whatsent: snapshotting {len(session.roots)} folders...", file=sys.stderr)
+    session.prepare()
     try:
-        proxy.start()
+        session.start_proxy()
     except RuntimeError as exc:
         print(f"whatsent: {exc}", file=sys.stderr)
         return 1
-    env = proxy.agent_env(dict(os.environ), proxy.write_ca_bundle(run_dir / "ca-bundle.pem"))
     if app:
-        command = apps.command(app, proxy.port, workspace, command)
         how = (f"In {app.name}: open the AI chat, ask the prompt below and let it finish, "
                f"then quit {app.name} completely (Cmd+Q / File > Exit).")
     else:
         how = "Use this prompt (the same one for every agent you compare), then exit the agent:"
-
+    local = session.proxy.local_spec
     print(f"""
-whatsent: canary project ready at {workspace}
-whatsent: proxy on 127.0.0.1:{proxy.port}{f", OS-level capture for {local_spec!r}" if local_spec else ""}
-whatsent: starting {args.name or Path(command[0]).name}
+whatsent: canary project ready at {session.workspace}
+whatsent: proxy on 127.0.0.1:{session.proxy.port}{f", OS-level capture for {local!r}" if local else ""}
+whatsent: starting {session.name}
 whatsent: {how}
 
     {canary.TASK_PROMPT}
 """, file=sys.stderr)
 
-    t0 = time.monotonic()
     # Ctrl-C belongs to the agent; we keep running so the report still gets written.
     old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    exit_code: int | str
     try:
-        if sys.platform == "win32":
-            # Windows children get Ctrl-C regardless of our handler, and only PATH lookup of
-            # .exe is built in, so resolve npm-style shims such as claude.cmd ourselves.
-            agent = subprocess.Popen([shutil.which(command[0]) or command[0], *command[1:]],
-                                     cwd=workspace, env=env)
-        else:
-            agent = subprocess.Popen(command, cwd=workspace, env=env,
-                                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
-    except OSError as exc:
-        signal.signal(signal.SIGINT, old_sigint)
-        proxy.stop()
-        print(f"whatsent: could not start {command[0]}: {exc}", file=sys.stderr)
-        return 127
-    # With OS-level capture every connection is redirected, so sampling for bypasses means nothing.
-    sampler = None if local_spec else ConnectionSampler(agent.pid, proxy.port)
-    if sampler:
-        sampler.start()
-    try:
-        exit_code = agent.wait()
-        duration = time.monotonic() - t0
-        time.sleep(1.0)  # let in-flight requests reach the log
+        try:
+            session.launch()
+        except OSError as exc:
+            session.close()
+            print(f"whatsent: could not start {session.command[0]}: {exc}", file=sys.stderr)
+            return 127
+        session.wait()
     finally:
         signal.signal(signal.SIGINT, old_sigint)
-        direct = sampler.stop() if sampler else []
-        proxy.stop()
-
-    if app and duration < QUICK_EXIT:
-        warnings.append(f"{app.name} exited after {duration:.0f}s. If it was already open, it handed this run "
-                        f"to the running copy and nothing was captured. Quit it completely and run again.")
-    problem = proxy.local_capture_problem()
-    if problem:
-        warnings.append(problem)
+        session.close()
 
     print("whatsent: checking watched folders...", file=sys.stderr)
-    after, truncated_after = diskwatch.snapshot(roots, exclude=[run_dir])
-    disk = diskwatch.diff(before, after, matcher)
-    disk["roots"] = [str(r) for r in roots]
-    disk["truncated_roots"] = sorted(set(truncated) | set(truncated_after))
-
-    meta = {
-        "whatsent_version": __version__,
-        "agent": args.name or Path(command[0]).name,
-        "agent_version": args.agent_version,
-        "kind": "app" if app else "cli",
-        "capture": f"local:{local_spec}" if local_spec else "env",
-        "command": command,
-        "started_at": started.isoformat(timespec="seconds"),
-        "duration_s": duration,
-        "exit_code": exit_code,
-        "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
-        "workspace": str(workspace),
-        "task_prompt": canary.TASK_PROMPT,
-        "warnings": warnings,
-        "sample": getattr(args, "sample", False),  # True for the simulated demo agent
-    }
-    summary = report.summarize(meta, canaries, report.load_events(proxy.events_file), disk, direct,
-                               home=getattr(args, "home", None))
-    html = report.write(summary, run_dir)
+    summary, html = session.finish()
     print_summary(summary, html)
-    return exit_code if isinstance(exit_code, int) and exit_code >= 0 else 1
+    code = session.exit_code
+    return code if isinstance(code, int) and code >= 0 else 1
+
+
+def popen(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen:
+    """Start the agent as our child, in the foreground of this terminal."""
+    if sys.platform == "win32":
+        # Windows children get Ctrl-C regardless of our handler, and only PATH lookup of
+        # .exe is built in, so resolve npm-style shims such as claude.cmd ourselves.
+        return subprocess.Popen([shutil.which(command[0]) or command[0], *command[1:]], cwd=cwd, env=env)
+    return subprocess.Popen(command, cwd=cwd, env=env,
+                            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+
+
+class Session:
+    """One recorded run: canary project, proxy, agent, report. ``whatsent run`` goes straight
+    through; ``whatsent ui`` drives the same steps one by one and can stop the agent early."""
+
+    def __init__(self, args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None):
+        self.args = args
+        self.app = app
+        self.command = command
+        self.name = args.name or (app.name if app else Path(command[0]).name)
+        self.started = datetime.now()
+        self.run_dir = (args.out / self.started.strftime("%Y%m%d-%H%M%S")).resolve()
+        self.workspace = self.run_dir / "workspace"
+        self.roots = ([] if args.no_default_watch else diskwatch.default_roots()) + \
+            [w.resolve() for w in args.watch]
+        self.warnings: list[str] = []
+        self.proxy: Proxy | None = None
+        self.agent = None  # anything with pid, poll(), terminate() and kill(), like a Popen
+        self.sampler: ConnectionSampler | None = None
+        self.direct: list[dict] = []
+        self.stop_requested = threading.Event()
+        self.exit_code: int | str | None = None
+        self.t0: float | None = None
+        self.duration = 0.0
+
+    def prepare(self) -> None:
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace)]
+        self.canaries_file = self.run_dir / "canaries.json"
+        self.canaries_file.write_text(json.dumps(self.canaries, indent=2), encoding="utf-8")
+        self.matcher = Matcher({c["id"]: c["token"] for c in self.canaries})
+        self.before, self.truncated = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+
+    def start_proxy(self, capture: str | None = None) -> None:
+        """Start the proxy, or restart it with another capture mode before the agent is launched."""
+        capture = capture or getattr(self.args, "capture", "env")
+        local_spec = None
+        if capture.startswith("local"):
+            local_spec = capture.partition(":")[2] or (self.app.executable.name if self.app
+                                                       else Path(self.command[0]).name)
+        if self.proxy:
+            self.proxy.stop()
+        self.proxy = Proxy(self.run_dir, self.canaries_file, self.run_dir / "events.jsonl", self.args.port,
+                           self.args.mitm_set, getattr(self.args, "proxy_env", None), local_spec)
+        self.proxy.start()
+        self.env = self.proxy.agent_env(dict(os.environ), self.proxy.write_ca_bundle(self.run_dir / "ca-bundle.pem"))
+
+    def agent_command(self) -> list[str]:
+        if self.app:
+            return apps.command(self.app, self.proxy.port, self.workspace, self.command)
+        return self.command
+
+    def launch(self, launcher=popen) -> None:
+        """Start (or restart) the agent. ``launcher(command, cwd, env)`` returns the process."""
+        self.agent = launcher(self.agent_command(), self.workspace, self.env)
+        self.launched_at = time.monotonic()
+        self.t0 = self.t0 or self.launched_at
+        # With OS-level capture every connection is redirected, so sampling for bypasses means nothing.
+        if not self.proxy.local_spec:
+            if self.sampler:
+                self.sampler.pid = self.agent.pid
+            else:
+                self.sampler = ConnectionSampler(self.agent.pid, self.proxy.port)
+                self.sampler.start()
+
+    def stop_agent(self, timeout: float = 10) -> None:
+        """Ask the agent to quit, the way closing its window would, and kill it if it hangs."""
+        agent = self.agent
+        if agent is None or agent.poll() is not None:
+            return
+        agent.terminate()
+        deadline = time.monotonic() + timeout
+        while agent.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if agent.poll() is None:
+            agent.kill()
+
+    def wait(self) -> None:
+        while (code := self.agent.poll()) is None:
+            if self.stop_requested.wait(0.2):
+                self.stop_agent()
+                code = "stopped"
+                break
+        self.exit_code = code
+        self.duration = time.monotonic() - self.t0
+        self.last_run = time.monotonic() - self.launched_at
+        time.sleep(1.0)  # let in-flight requests reach the log
+
+    def close(self) -> None:
+        if self.sampler:
+            self.direct = self.sampler.stop()
+            self.sampler = None
+        if self.proxy:
+            self.proxy.stop()
+
+    def finish(self) -> tuple[dict, Path]:
+        self.close()
+        if self.app and self.exit_code != "stopped" and self.last_run < QUICK_EXIT:
+            self.warnings.append(
+                f"{self.app.name} exited after {self.last_run:.0f}s. If it was already open, it handed this run "
+                f"to the running copy and nothing was captured. Quit it completely and run again.")
+        problem = self.proxy.local_capture_problem()
+        if problem:
+            self.warnings.append(problem)
+
+        after, truncated_after = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+        disk = diskwatch.diff(self.before, after, self.matcher)
+        disk["roots"] = [str(r) for r in self.roots]
+        disk["truncated_roots"] = sorted(set(self.truncated) | set(truncated_after))
+
+        args = self.args
+        meta = {
+            "whatsent_version": __version__,
+            "agent": self.name,
+            "agent_version": args.agent_version,
+            "kind": "app" if self.app else "cli",
+            "capture": f"local:{self.proxy.local_spec}" if self.proxy.local_spec else "env",
+            "command": self.agent_command(),
+            "started_at": self.started.isoformat(timespec="seconds"),
+            "duration_s": self.duration,
+            "exit_code": self.exit_code,
+            "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            "workspace": str(self.workspace),
+            "task_prompt": canary.TASK_PROMPT,
+            "warnings": self.warnings,
+            "sample": getattr(args, "sample", False),  # True for the simulated demo agent
+        }
+        summary = report.summarize(meta, self.canaries, report.load_events(self.proxy.events_file), disk,
+                                   self.direct, home=getattr(args, "home", None))
+        return summary, report.write(summary, self.run_dir)
 
 
 def print_summary(s: dict, html: Path) -> None:

@@ -90,9 +90,9 @@ def _tcp_listener() -> int:
     return s.getsockname()[1]
 
 
-def run_demo(args: argparse.Namespace) -> int:
-    from whatsent.cli import run  # late import: cli imports this module
-
+def setup(out: Path, pace: float = 0.0) -> tuple[argparse.Namespace, list[str]]:
+    """Start the local servers and return ``whatsent run`` arguments and the agent command.
+    ``pace`` spaces out the simulated agent's requests, so ``whatsent ui`` can show them arrive."""
     tmp = Path(tempfile.mkdtemp(prefix="whatsent-demo-"))
     tls = self_signed(tmp)
     http_port, https_port, direct_port = _serve(), _serve(tls), _tcp_listener()
@@ -110,13 +110,21 @@ def run_demo(args: argparse.Namespace) -> int:
         "--pinned", f"https://{HOSTS['pinned']}/v1/flags", "--pinned-ca", str(tls[0]),
         "--direct", f"127.0.0.1:{direct_port}",
         "--cache-dir", str(cache),
+        "--pace", str(pace),
     ]
     run_args = argparse.Namespace(
-        out=args.out, port=None, watch=[home], no_default_watch=True, app=None, capture="env",
+        out=out, port=None, watch=[home], no_default_watch=True, app=None, capture="env",
         # Our fake upstream servers use a self-signed certificate.
         mitm_set=["ssl_insecure=true"], name=AGENT_NAME, agent_version=None,
         proxy_env={"WHATSENT_REMAP": json.dumps(remap)}, home=home, sample=True,
     )
+    return run_args, command
+
+
+def run_demo(args: argparse.Namespace) -> int:
+    from whatsent.cli import run  # late import: cli imports this module
+
+    run_args, command = setup(args.out)
     print("whatsent: demo with a simulated agent and local servers; nothing leaves this machine.",
           file=sys.stderr)
     return run(run_args, command)
