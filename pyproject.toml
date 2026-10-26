@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "whatsent"
-version = "0.2.0"
+version = "0.3.0"
 description = "See what your AI coding agent sends, and where: canary project + local proxy + disk watch, one HTML report."
 readme = "README.md"
 license = { text = "MIT" }

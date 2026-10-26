@@ -9,9 +9,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 ADDON = Path(__file__).with_name("_addon.py")
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+# Where an existing proxy is looked up, in order of preference.
+UPSTREAM_VARS = ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy")
 
 
 def free_port() -> int:
@@ -20,10 +23,36 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def upstream_from_env(env: dict[str, str]) -> tuple[str | None, str | None]:
+    """The proxy the agent would have used without whatsent, as ``(url, problem)``.
+
+    Behind a corporate or VPN proxy the agent can only reach the internet through it, so
+    whatsent has to forward to it instead of connecting directly. Only HTTP(S) proxies work as
+    mitmproxy upstreams; for anything else ``problem`` says why traffic may fail."""
+    for var in UPSTREAM_VARS:
+        value = env.get(var, "").strip()
+        if not value:
+            continue
+        url = value if "://" in value else f"http://{value}"
+        scheme = urlsplit(url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return None, f"{var} points to a {scheme} proxy, which whatsent cannot forward to; traffic may not get out"
+        return url, None
+    return None, None
+
+
+def hide_credentials(url: str) -> str:
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
+
+
 class Proxy:
     def __init__(self, run_dir: Path, canaries_file: Path, events_file: Path,
                  port: int | None = None, mitm_options: list[str] | None = None,
-                 extra_env: dict[str, str] | None = None, local_spec: str | None = None):
+                 extra_env: dict[str, str] | None = None, local_spec: str | None = None,
+                 upstream: str | None = None):
         self.confdir = run_dir / "mitmproxy"
         self.log_file = run_dir / "mitmproxy.log"
         self.canaries_file = canaries_file
@@ -32,6 +61,7 @@ class Proxy:
         self.mitm_options = mitm_options or []
         self.extra_env = extra_env or {}
         self.local_spec = local_spec  # mitmproxy "local" mode: OS-level capture by process
+        self.upstream = upstream  # forward to this HTTP(S) proxy instead of connecting directly
         self.proc: subprocess.Popen | None = None
 
     @property
@@ -48,9 +78,10 @@ class Proxy:
         # Make the addon's `import whatsent` work even when run from a source checkout.
         pkg_parent = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, env.get("PYTHONPATH")]))
+        mode = f"upstream:{self.upstream}" if self.upstream else "regular"
         cmd = [
             sys.executable, "-c", "from mitmproxy.tools.main import mitmdump; mitmdump()",
-            "--mode", f"regular@127.0.0.1:{self.port}",
+            "--mode", f"{mode}@127.0.0.1:{self.port}",
             "--set", f"confdir={self.confdir}",
             "--set", "flow_detail=0",
             "-q", "-s", str(ADDON),
@@ -87,6 +118,15 @@ class Proxy:
                 self.proc.wait()
         if getattr(self, "log", None):
             self.log.close()
+
+    def forget_keys(self) -> None:
+        """Delete the run's CA private key. Only the certificate stays, so a shared report
+        folder cannot be used to impersonate servers to anything that trusted this run's CA."""
+        for name in ("mitmproxy-ca.pem", "mitmproxy-ca.p12", "mitmproxy-dhparam.pem"):
+            try:
+                (self.confdir / name).unlink()
+            except OSError:
+                pass
 
     def local_capture_problem(self) -> str | None:
         """Best-effort check that OS-level capture actually started (it needs a macOS system

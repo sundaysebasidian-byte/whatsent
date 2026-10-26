@@ -2,9 +2,10 @@
 
 Real runs for the [leaderboard](https://sundaysebasidian-byte.github.io/whatsent/). One file per agent version.
 
-1. Run the agent under whatsent with the suggested prompt:
-   `whatsent run --agent-version 1.2.3 -- <agent>` (CLI) or `whatsent run --app cursor --agent-version 1.2.3` (IDE).
-2. Copy the run's `result.json` here as `<agent>-<version>.json` and open a pull request.
+1. Run the agent under whatsent with the suggested prompt. `--clean` turns off your own MCP servers and plugins
+   (`claude`, `codex`), so the run shows the agent and not your setup; `--result-to` saves the result here:
+   `whatsent run --clean --result-to results/ -- <agent>` (CLI) or `whatsent run --app cursor --agent-version 1.2.3 --result-to results/` (IDE).
+2. The file is named `<agent>-<version>[-clean].json`. Open a pull request that adds it.
 
 `result.json` holds only what the board shows: which canaries left, destination hosts, byte counts and the
 platform. It has no paths, prompts, commands or file contents. Check it before you submit anyway.

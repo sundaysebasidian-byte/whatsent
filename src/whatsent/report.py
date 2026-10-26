@@ -274,13 +274,23 @@ def render_html(s: dict) -> str:
         gap_rows.append([f"<code>{e(c['ip'])}:{c['port']}</code>", why + (" (local)" if c["local"] else ""), "–"])
 
     d = s["disk"]
-    disk_rows = [[f"<code>{e(x['path'])}</code>", human_bytes(x["size"]),
-                  "".join(chip(cid) for cid in x["canaries"])] for x in d["leaks"]]
-    disk_rows += [[f"<code>{e(x['path'])}</code>", human_bytes(x["size"]),
-                   '<span class="chip">new archive</span>' if x.get("archive")
-                   else '<span class="chip">new large file</span>'] for x in d["suspicious"]]
 
-    version = f' <span>{e(s["agent_version"])}</span>' if s.get("agent_version") else ""
+    def new_file_rows(files: list[dict]) -> list[list[str]]:
+        return [[f"<code>{e(x['path'])}</code>", human_bytes(x["size"]),
+                 '<span class="chip">new archive</span>' if x.get("archive")
+                 else '<span class="chip">new large file</span>'] for x in files]
+
+    # Files whose path does not mention the agent are most likely other programs' own.
+    mine = [x for x in d["suspicious"] if x.get("related", True)]
+    others = [x for x in d["suspicious"] if not x.get("related", True)]
+    disk_rows = [[f"<code>{e(x['path'])}</code>", human_bytes(x["size"]),
+                  "".join(chip(cid) for cid in x["canaries"])] for x in d["leaks"]] + new_file_rows(mine)
+    other_files = (f'<details><summary>{len(others)} other new large '
+                   f'{"file" if len(others) == 1 else "files"}, probably from other programs</summary>'
+                   f'{table(["File", "Size", "Finding"], new_file_rows(others), "", {1})}</details>') if others else ""
+
+    tags = [s.get("agent_version"), "clean config" if s.get("clean") else None]
+    version = f' <span>{e(" · ".join(t for t in tags if t))}</span>' if any(tags) else ""
     when = e(str(s["started_at"]).replace("T", " ")[:16])
     agent = s.get("agent") or (s["command"][0] if s.get("command") else "agent")
     return f"""<!doctype html>
@@ -297,7 +307,7 @@ def render_html(s: dict) -> str:
 <div><b>{t["requests"]}</b><span>requests</span></div>
 <div><b>{human_bytes(t["bytes_out"])}</b><span>uploaded</span></div>
 <div><b>{t.get("not_inspected", 0)}</b><span>not inspected</span></div>
-<div><b>{len(d["suspicious"])}</b><span>new archives / blobs</span></div></div></div>
+<div><b>{len(mine)}</b><span>new archives / blobs</span></div></div></div>
 
 {"".join(f'<div class="warnbox">{e(w)}</div>' for w in s.get("warnings", []))}
 <section><h2>Canaries</h2>
@@ -318,7 +328,7 @@ def render_html(s: dict) -> str:
 <section><h2>Written to disk</h2>
 <p class="note">{d["changed_files"]} files changed under {len(d.get("roots", []))} watched folders.
 Encrypted uploads usually show up here as a new archive or large blob.</p>
-{table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}</section>
+{table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}{other_files}</section>
 
 <footer>whatsent {e(s["whatsent_version"])} · {e(s["platform"])} · capture: {e(s.get("capture", "env"))} · canary values are fake and unique to this run · {REPO}</footer>
 </main></body></html>

@@ -115,7 +115,7 @@ def setup(out: Path, pace: float = 0.0) -> tuple[argparse.Namespace, list[str]]:
     run_args = argparse.Namespace(
         out=out, port=None, watch=[home], no_default_watch=True, app=None, capture="env",
         # Our fake upstream servers use a self-signed certificate.
-        mitm_set=["ssl_insecure=true"], name=AGENT_NAME, agent_version=None,
+        mitm_set=["ssl_insecure=true"], name=AGENT_NAME, agent_version=None, upstream="none",
         proxy_env={"WHATSENT_REMAP": json.dumps(remap)}, home=home, sample=True,
     )
     return run_args, command

@@ -62,6 +62,17 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 Agent 启动前 whatsent 会打印一句建议的任务提示。对比多个 Agent 时请用同一句提示。Agent 在金丝雀项目里运行，使用你平时的登录和设置。
 
+你自己装的 MCP 服务器、连接器和插件也会发出流量。加上 `--clean` 可以把它们关掉（支持 `claude` 和 `codex`），报告就只反映 Agent 本身而不是你的配置，关掉了什么 whatsent 会打印出来。其他 Agent 加 `--clean` 会提示没有可用开关，照常运行。
+
+```bash
+whatsent run --clean -- claude -p "Fix the bug in src/app.py so that add() returns the sum of its arguments." --permission-mode acceptEdits
+whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspace-write "Fix the bug in src/app.py so that add() returns the sum of its arguments."
+```
+
+没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。
+
+如果设置了 `HTTPS_PROXY`（公司或 VPN 代理），whatsent 会转发到它，因为 Agent 本来就只能通过它上网。用 `--upstream URL` 指定别的代理，`--upstream none` 表示直连。只支持 HTTP(S) 代理，SOCKS 代理会以警告提示。
+
 ### IDE 类 Agent（Cursor、Trae、Windsurf 等）
 
 ```bash
@@ -87,12 +98,16 @@ whatsent run --app trae --capture local:Trae
 | --- | --- |
 | `--app 名称\|路径` | 启动桌面 IDE 类 Agent |
 | `--capture env\|local[:SPEC]` | 只用代理设置（默认），或对匹配 SPEC 的进程加上系统层抓包 |
-| `--name`、`--agent-version` | 在报告和测评榜里标注 Agent 名称和版本 |
+| `--clean` | 关掉你的 MCP 服务器、连接器和插件（`claude`、`codex`） |
+| `--name`、`--agent-version` | 在报告和测评榜里标注 Agent 名称和版本（版本默认向 Agent 查询） |
+| `--timeout 秒数` | 超过这个时间就停掉 Agent |
+| `--upstream URL\|none` | 转发到指定的 HTTP(S) 代理；默认用 `HTTPS_PROXY` 里的代理（如果有） |
 | `--out DIR` | 报告目录（默认 `./whatsent-report`） |
+| `--result-to DIR` | 同时把 `result.json` 复制为 `DIR/<agent>-<版本>[-clean].json` |
 | `--watch DIR` | 额外监控某个目录（可重复） |
 | `--no-default-watch` | 只监控 `--watch` 指定的目录 |
 | `--port N` | 固定代理端口 |
-| `--mitm-set KEY=VALUE` | 透传 mitmproxy 选项，例如 `mode=upstream:http://corp-proxy:8080` |
+| `--mitm-set KEY=VALUE` | 透传 mitmproxy 选项（高级），例如 `ssl_insecure=true` |
 
 默认监控 `~/.claude`、`~/.codex`、`~/.gemini`、`~/.cursor`、`~/.trae` 等 Agent 目录；Linux 上另加 `~/.cache`、`~/.config`、`~/.local/share` 和临时目录，macOS 上另加 `~/Library/Caches` 和 `~/Library/Application Support`，Windows 上另加 `%APPDATA%` 和 `%LOCALAPPDATA%`（临时目录也在里面）。浏览器缓存等嘈杂目录会跳过。
 
@@ -105,9 +120,9 @@ whatsent run --app trae --capture local:Trae
 
 ## 测评榜
 
-`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，然后提 PR 把它的 `result.json` 放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。
+`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
 
-在有真实结果之前，测评榜展示的是虚构 Agent 的示例数据，页面上会明确标注为示例（见 [examples/make_examples.py](examples/make_examples.py)）。
+测评榜展示的是 [`results/`](results/) 里的真实结果；这个目录为空时，才展示虚构 Agent 的示例数据，页面上会明确标注为示例（见 [examples/make_examples.py](examples/make_examples.py)）。
 
 ## 环境要求
 
@@ -122,8 +137,10 @@ whatsent run --app trae --capture local:Trae
 - Windows 版在 CI 里测过（演示和替身 IDE），还没用真实 Agent 测过。各 IDE 在 Windows 上的安装路径是按常见位置猜的；`--app 名称` 找不到时请直接传 `.exe` 路径。
 - 连接采样每 0.2 秒一次，极短的直连可能漏掉。
 - 加密上传只能看到目的地和大小，看不到内容。落盘监控只有在工具把数据暂存在被监控目录时才有用。
-- 落盘监控会标出被监控目录里所有新出现的大文件，包括运行期间其他程序写的。运行时间尽量短，其他应用尽量别动。
-- 真实 Agent 还没有用 whatsent 跑过，各 Agent 的结果核实后再公布。
+- 落盘监控会列出被监控目录里所有新出现的大文件，包括运行期间其他程序写的；路径里没出现 Agent 名称的文件会归到"可能来自其他程序"一栏。运行时间尽量短，其他应用尽量别动。
+- 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。
+- 一份结果只是一次运行，而 Agent 每次表现并不相同：同一个任务跑两次，`codex` 有一次列出了项目的文件，另一次没有。只凭一次的差异下结论之前，请多跑几次。
+- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude` 和 `codex`，用无头模式（`claude -p`、`codex exec`）加 `--clean` 运行。交互式会话、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
 
 ## 开发
 

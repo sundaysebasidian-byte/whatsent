@@ -30,6 +30,7 @@ def to_result(report: dict) -> dict:
         "agent_version": report.get("agent_version"),
         "kind": report.get("kind", "cli"),
         "capture": report.get("capture", "env"),
+        "clean": bool(report.get("clean")),
         "platform": f"{system} {machine}".strip(),
         "date": str(report.get("started_at", ""))[:10],
         "whatsent_version": report.get("whatsent_version"),
@@ -70,7 +71,7 @@ def latest_per_agent(results: list[dict]) -> list[dict]:
     best: dict[tuple, dict] = {}
     runs: dict[tuple, int] = {}
     for r in results:
-        key = (r["agent"].lower(), r.get("agent_version") or "", r.get("sample", False))
+        key = (r["agent"].lower(), r.get("agent_version") or "", r.get("sample", False), bool(r.get("clean")))
         runs[key] = runs.get(key, 0) + 1
         if key not in best or r["date"] >= best[key]["date"]:
             best[key] = r
@@ -122,7 +123,9 @@ def render(rows: list[dict]) -> str:
         disk = sum(1 for x in r["canaries"].values() if x["sensitive"] and x["on_disk"])
         hosts = ", ".join(d["host"] for d in r["destinations"])
         runs = r.get("runs", 1)
-        details = " · ".join(str(x) for x in (r.get("agent_version"), r["kind"], r["platform"], r["date"]) if x)
+        details = " · ".join(str(x) for x in (r.get("agent_version"), r["kind"],
+                                              "clean config" if r.get("clean") else None,
+                                              r["platform"], r["date"]) if x)
         body.append(
             "<tr>"
             f'<td class="rank">{i}</td>'

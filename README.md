@@ -62,6 +62,17 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 whatsent prints a suggested prompt before the agent starts. Use the same prompt for every agent you compare. The agent runs inside the canary project, with your normal login and settings.
 
+Your own MCP servers, connectors and plugins send traffic of their own. Add `--clean` to turn them off for `claude` and `codex`, so the report is about the agent and not your setup; whatsent prints what it switched off. For other agents `--clean` says it has no switches and runs as usual.
+
+```bash
+whatsent run --clean -- claude -p "Fix the bug in src/app.py so that add() returns the sum of its arguments." --permission-mode acceptEdits
+whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspace-write "Fix the bug in src/app.py so that add() returns the sum of its arguments."
+```
+
+The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`.
+
+If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or `--upstream none` to connect directly. Only HTTP(S) proxies work; a SOCKS proxy is reported as a warning.
+
 ### IDE agents (Cursor, Trae, Windsurf, …)
 
 ```bash
@@ -87,12 +98,16 @@ whatsent run --app trae --capture local:Trae
 | --- | --- |
 | `--app NAME\|PATH` | Launch a desktop IDE agent |
 | `--capture env\|local[:SPEC]` | Proxy settings only (default), or add OS-level capture for processes matching SPEC |
-| `--name`, `--agent-version` | Label the run in the report and leaderboard |
+| `--clean` | Turn off your MCP servers, connectors and plugins (`claude`, `codex`) |
+| `--name`, `--agent-version` | Label the run in the report and leaderboard (the version is asked from the agent by default) |
+| `--timeout SECONDS` | Stop the agent after this long |
+| `--upstream URL\|none` | Forward to this HTTP(S) proxy; default is the one in `HTTPS_PROXY`, if any |
 | `--out DIR` | Where reports go (default `./whatsent-report`) |
+| `--result-to DIR` | Also copy `result.json` to `DIR/<agent>-<version>[-clean].json` |
 | `--watch DIR` | Also watch this folder for files the agent writes (repeatable) |
 | `--no-default-watch` | Watch only the `--watch` folders |
 | `--port N` | Fixed proxy port |
-| `--mitm-set KEY=VALUE` | Pass an option to mitmproxy, e.g. `mode=upstream:http://corp-proxy:8080` |
+| `--mitm-set KEY=VALUE` | Pass an option to mitmproxy (advanced), e.g. `ssl_insecure=true` |
 
 By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.trae`, plus `~/.cache`, `~/.config`, `~/.local/share` and the temp folder on Linux, `~/Library/Caches` and `~/Library/Application Support` on macOS, and `%APPDATA%` and `%LOCALAPPDATA%` (which holds the temp folder) on Windows. Busy browser caches are skipped.
 
@@ -105,9 +120,9 @@ By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.g
 
 ## Leaderboard
 
-`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt and open a pull request that adds its `result.json` to [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents.
+`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
 
-Until real results are submitted, the board shows made-up examples of fictional agents, labelled as examples ([examples/make_examples.py](examples/make_examples.py)).
+Results from [`results/`](results/) are what the board shows. While that folder is empty it shows made-up examples of fictional agents, labelled as examples ([examples/make_examples.py](examples/make_examples.py)).
 
 ## Requirements
 
@@ -122,8 +137,10 @@ Until real results are submitted, the board shows made-up examples of fictional 
 - Windows support is tested in CI (the demo and the stand-in IDE), not yet with real agents. The Windows install paths of the IDEs are best guesses; if `--app NAME` does not find yours, pass the `.exe` path.
 - The socket sampler checks every 0.2 s, so very short direct connections can be missed.
 - Encrypted uploads can only be measured (destination and size), not read. The disk watch helps only if the tool stages the data in a watched folder.
-- Disk watch flags any new large file in watched folders, including ones other programs wrote during the run. Keep runs short and other apps quiet.
-- Real agents have not been run through whatsent yet; per-agent results will be published as they are verified.
+- Disk watch lists any new large file in watched folders, including ones other programs wrote during the run. Files whose path does not mention the agent are grouped as "probably from other programs". Keep runs short and other apps quiet.
+- A watched folder that takes more than 45 s to scan, or holds over a million files, is only partly scanned. The report then carries a warning and the disk findings for that folder may be incomplete.
+- A result is one run, and agents vary between runs: in two runs of the same task, `codex` listed the project's files in one and not in the other. Repeat a run before drawing conclusions from a single difference.
+- Real agents tested so far: `claude` and `codex` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`) with `--clean`. Interactive sessions, other agents, and real runs on Windows and Linux are still to come.
 
 ## Development
 
