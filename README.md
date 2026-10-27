@@ -62,12 +62,14 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 whatsent prints a suggested prompt before the agent starts. Use the same prompt for every agent you compare. The agent runs inside the canary project, with your normal login and settings.
 
-Your own MCP servers, connectors and plugins send traffic of their own. Add `--clean` to turn them off for `claude` and `codex`, so the report is about the agent and not your setup; whatsent prints what it switched off. For other agents `--clean` says it has no switches and runs as usual.
+Your own MCP servers, connectors and plugins send traffic of their own. Add `--clean` to turn them off for `claude`, `codex`, `codebuddy` and `copilot`, so the report is about the agent and not your setup; whatsent prints what it switched off. For other agents `--clean` says it has no switches and runs as usual.
 
 ```bash
 whatsent run --clean -- claude -p "Fix the bug in src/app.py so that add() returns the sum of its arguments." --permission-mode acceptEdits
 whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspace-write "Fix the bug in src/app.py so that add() returns the sum of its arguments."
 ```
+
+Agents vary from run to run, so a result from one run can mislead. `--runs 3` runs the agent three times, each in a fresh canary project, and writes one combined result: a canary counts as sent if any run sent it, the board shows in how many (for example `2/3`), and uploads are averaged per run.
 
 The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`.
 
@@ -98,8 +100,9 @@ whatsent run --app trae --capture local:Trae
 | --- | --- |
 | `--app NAME\|PATH` | Launch a desktop IDE agent |
 | `--capture env\|local[:SPEC]` | Proxy settings only (default), or add OS-level capture for processes matching SPEC |
-| `--clean` | Turn off your MCP servers, connectors and plugins (`claude`, `codex`) |
+| `--clean` | Turn off your MCP servers, connectors and plugins (`claude`, `codex`, `codebuddy`, `copilot`) |
 | `--name`, `--agent-version` | Label the run in the report and leaderboard (the version is asked from the agent by default) |
+| `--runs N` | Run the agent N times and combine them into one result |
 | `--timeout SECONDS` | Stop the agent after this long |
 | `--upstream URL\|none` | Forward to this HTTP(S) proxy; default is the one in `HTTPS_PROXY`, if any |
 | `--out DIR` | Where reports go (default `./whatsent-report`) |
@@ -139,8 +142,8 @@ Results from [`results/`](results/) are what the board shows. While that folder 
 - Encrypted uploads can only be measured (destination and size), not read. The disk watch helps only if the tool stages the data in a watched folder.
 - Disk watch lists any new large file in watched folders, including ones other programs wrote during the run. Files whose path does not mention the agent are grouped as "probably from other programs". Keep runs short and other apps quiet.
 - A watched folder that takes more than 45 s to scan, or holds over a million files, is only partly scanned. The report then carries a warning and the disk findings for that folder may be incomplete.
-- A result is one run, and agents vary between runs: in two runs of the same task, `codex` listed the project's files in one and not in the other. Repeat a run before drawing conclusions from a single difference.
-- Real agents tested so far: `claude` and `codex` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`) with `--clean`. Interactive sessions, other agents, and real runs on Windows and Linux are still to come.
+- Agents vary between runs. In three runs of the same task, `codex` sent the git history in one and the file listing in one, and `copilot` listed the files in one. The published results are therefore combined from three runs each (`--runs 3`); use `--runs` for anything you plan to compare.
+- Real agents tested so far: `claude`, `codex`, `codebuddy` and `copilot` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`, `codebuddy -p`, `copilot -p`) with `--clean`, three runs each. `copilot` ran with `--allow-tool=write` only, so it could edit files but not run shell commands. Interactive sessions, IDE agents, other agents, and real runs on Windows and Linux are still to come.
 
 ## Development
 

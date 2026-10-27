@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # Agent CLIs whose --version is safe to ask. Anything else could be a script that starts the agent.
-KNOWN = frozenset({"claude", "codex", "gemini", "aider", "opencode", "kimi", "goose", "qwen", "amp",
+KNOWN = frozenset({"claude", "codex", "codebuddy", "gemini", "aider", "opencode", "kimi", "goose", "qwen", "amp",
                    "cursor-agent", "copilot", "crush", "droid"})
 VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?(?:[-+.][0-9A-Za-z.]+)*")
 SAFE_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -71,6 +71,10 @@ def clean(command: list[str]) -> Clean | None:
         return Clean([command[0], "--strict-mcp-config", *command[1:]],
                      {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"},
                      ["--strict-mcp-config", "ENABLE_CLAUDEAI_MCP_SERVERS=false"])
+    if name == "codebuddy":  # a fork of Claude Code with the same switch
+        return Clean([command[0], "--strict-mcp-config", *command[1:]], {}, ["--strict-mcp-config"])
+    if name == "copilot":
+        return Clean([command[0], "--disable-builtin-mcps", *command[1:]], {}, ["--disable-builtin-mcps"])
     if name == "codex":
         return _clean_codex(command)
     return None

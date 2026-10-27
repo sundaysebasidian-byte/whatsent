@@ -17,25 +17,29 @@
       "sent_to": [
         "chatgpt.com"
       ],
-      "on_disk": true
+      "on_disk": true,
+      "seen_in": 3
     },
     "unrelated_source": {
       "short": "unrelated file",
       "sensitive": false,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "dotenv": {
       "short": ".env secret",
       "sensitive": true,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "credentials": {
       "short": "cloud credentials",
       "sensitive": true,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "file_name": {
       "short": "file listing",
@@ -43,36 +47,41 @@
       "sent_to": [
         "chatgpt.com"
       ],
-      "on_disk": true
+      "on_disk": true,
+      "seen_in": 1
     },
     "git_history": {
       "short": "git history",
       "sensitive": true,
-      "sent_to": [],
-      "on_disk": false
+      "sent_to": [
+        "chatgpt.com"
+      ],
+      "on_disk": true,
+      "seen_in": 1
     }
   },
   "destinations": [
     {
       "host": "ab.chatgpt.com",
       "requests": 1,
-      "bytes_out": 1395572
+      "bytes_out": 758875
     },
     {
       "host": "chatgpt.com",
-      "requests": 25,
-      "bytes_out": 1184748
+      "requests": 18,
+      "bytes_out": 455354
     }
   ],
   "totals": {
     "canaries": 6,
-    "leaked": 2,
-    "leaked_sensitive": 0,
-    "requests": 26,
+    "leaked": 3,
+    "leaked_sensitive": 1,
+    "requests": 19,
     "hosts": 2,
-    "bytes_out": 2580320,
+    "bytes_out": 1214229,
     "not_inspected": 0,
-    "copied_to_disk": 2
+    "copied_to_disk": 3
   },
-  "warnings": 0
+  "warnings": 0,
+  "runs": 3
 }

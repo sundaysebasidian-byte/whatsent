@@ -49,6 +49,52 @@ def to_result(report: dict) -> dict:
     }
 
 
+def combine(results: list[dict]) -> dict:
+    """One result from several runs of the same agent. A canary counts as sent if any run sent
+    it (``seen_in`` says in how many); uploads are averaged per run."""
+    n = len(results)
+    canaries = {}
+    for cid, first in results[0]["canaries"].items():
+        runs = [r["canaries"][cid] for r in results if cid in r["canaries"]]
+        canaries[cid] = {
+            "short": first["short"], "sensitive": first["sensitive"],
+            "sent_to": sorted({h for x in runs for h in x["sent_to"]}),
+            "on_disk": any(x["on_disk"] for x in runs),
+            "seen_in": sum(1 for x in runs if x["sent_to"]),
+        }
+    hosts: dict[str, dict] = {}
+    for r in results:
+        for d in r["destinations"]:
+            h = hosts.setdefault(d["host"], {"host": d["host"], "requests": 0, "bytes_out": 0})
+            h["requests"] += d["requests"]
+            h["bytes_out"] += d["bytes_out"]
+    destinations = sorted(({"host": h["host"], "requests": round(h["requests"] / n),
+                            "bytes_out": round(h["bytes_out"] / n)} for h in hosts.values()),
+                          key=lambda d: d["bytes_out"], reverse=True)
+    sent = [c for c in canaries.values() if c["sent_to"]]
+    totals = {
+        "canaries": len(canaries),
+        "leaked": len(sent),
+        "leaked_sensitive": sum(1 for c in sent if c["sensitive"]),
+        "requests": sum(d["requests"] for d in destinations),
+        "hosts": len(destinations),
+        "bytes_out": sum(d["bytes_out"] for d in destinations),
+        "not_inspected": max(r["totals"]["not_inspected"] for r in results),
+        "copied_to_disk": sum(1 for c in canaries.values() if c["on_disk"]),
+    }
+    return {
+        **results[0],
+        "agent_version": next((r["agent_version"] for r in results if r.get("agent_version")), None),
+        "clean": all(r.get("clean") for r in results),
+        "date": max(r["date"] for r in results),
+        "runs": n,
+        "canaries": canaries,
+        "destinations": destinations,
+        "totals": totals,
+        "warnings": max(r.get("warnings", 0) for r in results),
+    }
+
+
 def collect(paths: list[Path]) -> list[dict]:
     files: list[Path] = []
     for p in paths:
@@ -72,7 +118,7 @@ def latest_per_agent(results: list[dict]) -> list[dict]:
     runs: dict[tuple, int] = {}
     for r in results:
         key = (r["agent"].lower(), r.get("agent_version") or "", r.get("sample", False), bool(r.get("clean")))
-        runs[key] = runs.get(key, 0) + 1
+        runs[key] = runs.get(key, 0) + r.get("runs", 1)
         if key not in best or r["date"] >= best[key]["date"]:
             best[key] = r
     return [{**r, "runs": runs[k]} for k, r in best.items()]
@@ -113,7 +159,14 @@ def render(rows: list[dict]) -> str:
     def chips(r: dict, sensitive: bool) -> str:
         hits = [x for x in r["canaries"].values() if x["sensitive"] == sensitive and x["sent_to"]]
         tone = "bad" if sensitive else "warn"
-        return "".join(f'<span class="chip {tone}">{e(x["short"])}</span>' for x in hits) or \
+        n = r.get("runs", 1)
+
+        def label(x: dict) -> str:
+            # With several runs, say in how many it happened.
+            seen = f" {x['seen_in']}/{n}" if n > 1 and "seen_in" in x else ""
+            return f'<span class="chip {tone}">{e(x["short"])}{seen}</span>'
+
+        return "".join(label(x) for x in hits) or \
             '<span class="chip good">none</span>'
 
     body = []
@@ -169,6 +222,7 @@ leave the machine, where they go, and what could not be inspected.</p>
 <li><b>Secrets sent</b>: gitignored secrets or git history seen in outgoing traffic. No task needed them.</li>
 <li><b>Project files sent</b>: the task file is expected; an unrelated file or the file listing shows how much context goes along.</li>
 <li><b>Not inspected</b>: connections whatsent could not read (pinned certificates, traffic that ignored the proxy). A row with no leaks but traffic not inspected is incomplete, not clean.</li>
+<li>With several runs, a canary counts as sent if any run sent it, <b>2/3</b> says in how many, and uploads are the average per run.</li>
 <li>Ranked by secrets sent, then incomplete runs, secrets copied to disk, project files sent and bytes uploaded.</li>
 </ol></section>
 <section><h2>Add a result</h2><p class="note" style="font-size:14px">Run <code>whatsent run -- &lt;agent&gt;</code>

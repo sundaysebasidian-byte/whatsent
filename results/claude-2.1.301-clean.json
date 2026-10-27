@@ -17,31 +17,36 @@
       "sent_to": [
         "api.anthropic.com"
       ],
-      "on_disk": true
+      "on_disk": true,
+      "seen_in": 3
     },
     "unrelated_source": {
       "short": "unrelated file",
       "sensitive": false,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "dotenv": {
       "short": ".env secret",
       "sensitive": true,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "credentials": {
       "short": "cloud credentials",
       "sensitive": true,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "file_name": {
       "short": "file listing",
       "sensitive": false,
       "sent_to": [],
-      "on_disk": false
+      "on_disk": false,
+      "seen_in": 0
     },
     "git_history": {
       "short": "git history",
@@ -49,19 +54,25 @@
       "sent_to": [
         "api.anthropic.com"
       ],
-      "on_disk": true
+      "on_disk": true,
+      "seen_in": 3
     }
   },
   "destinations": [
     {
       "host": "api.anthropic.com",
-      "requests": 16,
-      "bytes_out": 938087
+      "requests": 15,
+      "bytes_out": 1026952
     },
     {
       "host": "http-intake.logs.us5.datadoghq.com",
       "requests": 1,
-      "bytes_out": 111286
+      "bytes_out": 113702
+    },
+    {
+      "host": "platform.claude.com",
+      "requests": 1,
+      "bytes_out": 382
     }
   ],
   "totals": {
@@ -69,10 +80,11 @@
     "leaked": 2,
     "leaked_sensitive": 1,
     "requests": 17,
-    "hosts": 2,
-    "bytes_out": 1049373,
+    "hosts": 3,
+    "bytes_out": 1141036,
     "not_inspected": 0,
     "copied_to_disk": 2
   },
-  "warnings": 0
+  "warnings": 0,
+  "runs": 3
 }

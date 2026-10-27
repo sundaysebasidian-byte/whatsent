@@ -3,7 +3,7 @@
 Real runs for the [leaderboard](https://sundaysebasidian-byte.github.io/whatsent/). One file per agent version.
 
 1. Run the agent under whatsent with the suggested prompt. `--clean` turns off your own MCP servers and plugins
-   (`claude`, `codex`), so the run shows the agent and not your setup; `--result-to` saves the result here:
+   (`claude`, `codex`, `codebuddy`, `copilot`), so the run shows the agent and not your setup; `--result-to` saves the result here:
    `whatsent run --clean --result-to results/ -- <agent>` (CLI) or `whatsent run --app cursor --agent-version 1.2.3 --result-to results/` (IDE).
 2. The file is named `<agent>-<version>[-clean].json`. Open a pull request that adds it.
 

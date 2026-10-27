@@ -62,12 +62,14 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 Agent 启动前 whatsent 会打印一句建议的任务提示。对比多个 Agent 时请用同一句提示。Agent 在金丝雀项目里运行，使用你平时的登录和设置。
 
-你自己装的 MCP 服务器、连接器和插件也会发出流量。加上 `--clean` 可以把它们关掉（支持 `claude` 和 `codex`），报告就只反映 Agent 本身而不是你的配置，关掉了什么 whatsent 会打印出来。其他 Agent 加 `--clean` 会提示没有可用开关，照常运行。
+你自己装的 MCP 服务器、连接器和插件也会发出流量。加上 `--clean` 可以把它们关掉（支持 `claude`、`codex`、`codebuddy`、`copilot`），报告就只反映 Agent 本身而不是你的配置，关掉了什么 whatsent 会打印出来。其他 Agent 加 `--clean` 会提示没有可用开关，照常运行。
 
 ```bash
 whatsent run --clean -- claude -p "Fix the bug in src/app.py so that add() returns the sum of its arguments." --permission-mode acceptEdits
 whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspace-write "Fix the bug in src/app.py so that add() returns the sum of its arguments."
 ```
+
+Agent 每次表现并不相同，一次运行的结果可能有误导。`--runs 3` 会把 Agent 各在全新的金丝雀项目里跑三遍，合并成一份结果：只要有一遍发出了某个金丝雀就算发出，测评榜上会标出几遍里出现了几遍（比如 `2/3`），上传量取每遍的平均。
 
 没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。
 
@@ -98,8 +100,9 @@ whatsent run --app trae --capture local:Trae
 | --- | --- |
 | `--app 名称\|路径` | 启动桌面 IDE 类 Agent |
 | `--capture env\|local[:SPEC]` | 只用代理设置（默认），或对匹配 SPEC 的进程加上系统层抓包 |
-| `--clean` | 关掉你的 MCP 服务器、连接器和插件（`claude`、`codex`） |
+| `--clean` | 关掉你的 MCP 服务器、连接器和插件（`claude`、`codex`、`codebuddy`、`copilot`） |
 | `--name`、`--agent-version` | 在报告和测评榜里标注 Agent 名称和版本（版本默认向 Agent 查询） |
+| `--runs N` | 把 Agent 跑 N 遍，合并成一份结果 |
 | `--timeout 秒数` | 超过这个时间就停掉 Agent |
 | `--upstream URL\|none` | 转发到指定的 HTTP(S) 代理；默认用 `HTTPS_PROXY` 里的代理（如果有） |
 | `--out DIR` | 报告目录（默认 `./whatsent-report`） |
@@ -139,8 +142,8 @@ whatsent run --app trae --capture local:Trae
 - 加密上传只能看到目的地和大小，看不到内容。落盘监控只有在工具把数据暂存在被监控目录时才有用。
 - 落盘监控会列出被监控目录里所有新出现的大文件，包括运行期间其他程序写的；路径里没出现 Agent 名称的文件会归到"可能来自其他程序"一栏。运行时间尽量短，其他应用尽量别动。
 - 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。
-- 一份结果只是一次运行，而 Agent 每次表现并不相同：同一个任务跑两次，`codex` 有一次列出了项目的文件，另一次没有。只凭一次的差异下结论之前，请多跑几次。
-- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude` 和 `codex`，用无头模式（`claude -p`、`codex exec`）加 `--clean` 运行。交互式会话、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
+- Agent 每次表现并不相同。同一个任务跑三次，`codex` 有一次发出了 git 历史，有一次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每个 Agent 三次运行合并而成的（`--runs 3`）；要拿结果做对比，请用 `--runs`。
+- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，各跑三次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
 
 ## 开发
 

@@ -67,6 +67,9 @@ def test_suspicious_files_are_marked_related_to_the_agent(tmp_path):
     assert diskwatch.related("/h/.trae-cn/x", "Trae CN") and diskwatch.related("/h/x", None)
     assert diskwatch.related("/h/x", "ab") and not diskwatch.related("/h/Claude/x", "codex")
     assert diskwatch.related("/h/.demo-agent/cache/x", "demo-agent (simulated)")
+    # An app's own Chromium stores are never the agent's, even when the app has the agent's name.
+    assert not diskwatch.related("/h/Library/Application Support/Claude/IndexedDB/https_claude.ai_0.indexeddb.blob/1/x", "claude")
+    assert not diskwatch.related("/h/Library/Application Support/Claude/blob_storage/x", "claude")
 
 
 def test_upstream_proxy_from_environment():
@@ -144,6 +147,8 @@ def test_clean_claude():
     c = agents.clean(["claude", "-p", "hi"])
     assert c.command == ["claude", "--strict-mcp-config", "-p", "hi"]
     assert c.env == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
+    assert agents.clean(["codebuddy", "-p", "hi"]).command == ["codebuddy", "--strict-mcp-config", "-p", "hi"]
+    assert agents.clean(["copilot", "-p", "hi"]).command == ["copilot", "--disable-builtin-mcps", "-p", "hi"]
     assert agents.clean(["aider", "--yes"]) is None and agents.clean([]) is None
 
 
@@ -241,3 +246,44 @@ def test_terminating_whatsent_stops_the_agent_and_the_proxy(tmp_path):
         proc.kill()
     (run_dir,) = out.iterdir()
     assert not (run_dir / "mitmproxy" / "mitmproxy-ca.pem").exists()
+
+
+def _result(sent: dict[str, list[str]], hosts: list[tuple[str, int, int]], **extra) -> dict:
+    canaries = {cid: {"short": cid, "sensitive": cid == "dotenv", "sent_to": to, "on_disk": False}
+                for cid, to in sent.items()}
+    return {"agent": "x", "agent_version": "1", "kind": "cli", "platform": "p", "date": "2026-10-26",
+            "clean": True, "sample": False, "whatsent_version": "0",
+            "canaries": canaries,
+            "destinations": [{"host": h, "requests": r, "bytes_out": b} for h, r, b in hosts],
+            "totals": {"canaries": len(canaries), "leaked": 0, "leaked_sensitive": 0, "requests": 0, "hosts": 0,
+                       "bytes_out": 0, "not_inspected": 0, "copied_to_disk": 0},
+            "warnings": 0, **extra}
+
+
+def test_combine_counts_a_canary_if_any_run_sent_it():
+    a = _result({"task": ["api.x"], "dotenv": []}, [("api.x", 10, 1000)])
+    b = _result({"task": ["api.x"], "dotenv": ["telemetry.x"]}, [("api.x", 20, 3000), ("t.x", 2, 40)],
+                date="2026-10-27")
+    r = board.combine([a, b])
+    assert r["runs"] == 2 and r["date"] == "2026-10-27"
+    assert r["canaries"]["task"]["seen_in"] == 2 and r["canaries"]["dotenv"]["seen_in"] == 1
+    assert r["canaries"]["dotenv"]["sent_to"] == ["telemetry.x"]
+    assert r["totals"]["leaked"] == 2 and r["totals"]["leaked_sensitive"] == 1
+    assert [(d["host"], d["requests"], d["bytes_out"]) for d in r["destinations"]] == [
+        ("api.x", 15, 2000), ("t.x", 1, 20)]  # averaged per run
+    assert r["totals"]["hosts"] == 2 and r["totals"]["bytes_out"] == 2020
+    html = board.render(board.latest_per_agent([r]))
+    assert "dotenv 1/2" in html and "task 2/2" in html and "2 runs" in html
+
+
+def test_several_runs_give_one_combined_result(tmp_path):
+    pytest.importorskip("mitmproxy")
+    out, results = tmp_path / "out", tmp_path / "results"
+    code = main(["run", "--out", str(out), "--no-default-watch", "--runs", "2", "--result-to", str(results),
+                 "--agent-version", "1", "--name", "twice", "--", sys.executable, "-c", "pass"])
+    assert code == 0
+    assert len([d for d in out.iterdir() if not d.name.endswith("-x2")]) == 2  # one report folder per run
+    combined = json.loads((results / "twice-1.json").read_text(encoding="utf-8"))
+    assert combined["runs"] == 2 and combined["agent"] == "twice"
+    assert all("seen_in" in c for c in combined["canaries"].values())
+    assert main(["run", "--runs", "0", "--", "x"]) == 2
