@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import platform
@@ -19,7 +20,7 @@ from urllib.parse import urlsplit
 
 import psutil
 
-from whatsent import __version__, agents, apps, canary, diskwatch, report
+from whatsent import __version__, agents, apps, board, canary, diskwatch, report
 from whatsent.capture import Proxy, hide_credentials, upstream_from_env
 from whatsent.detect import Matcher
 from whatsent.netwatch import ConnectionSampler
@@ -55,8 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
                           "none: connect directly)")
     run.add_argument("--timeout", type=float, metavar="SECONDS",
                      help="stop the agent after this long (default: wait for it to exit)")
+    run.add_argument("--runs", type=int, default=1, metavar="N",
+                     help="run the agent N times and combine them into one result: a canary counts as "
+                          "sent if any run sent it (agents vary from run to run)")
     run.add_argument("--clean", action="store_true",
-                     help="turn off your MCP servers, connectors and plugins (claude and codex), so the "
+                     help="turn off your MCP servers, connectors and plugins (claude, codex, codebuddy and copilot), so the "
                           "run shows the agent itself")
     run.add_argument("--result-to", type=Path, metavar="DIR",
                      help="also copy result.json into DIR as <agent>-<version>[-clean].json, e.g. results/")
@@ -96,22 +100,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.timeout is not None and args.timeout <= 0:
         print("whatsent: --timeout must be more than 0 seconds", file=sys.stderr)
         return 2
+    if args.runs < 1:
+        print("whatsent: --runs must be at least 1", file=sys.stderr)
+        return 2
     if args.clean and args.app:
-        print("whatsent: --clean works for CLI agents (claude, codex), not for IDE apps", file=sys.stderr)
+        print("whatsent: --clean works for CLI agents (claude, codex, codebuddy, copilot), not for IDE apps", file=sys.stderr)
         return 2
     if args.upstream and args.upstream.lower() != "none" and \
             urlsplit(args.upstream if "://" in args.upstream else f"http://{args.upstream}").scheme not in ("http", "https"):
         print("whatsent: --upstream is an http:// or https:// proxy, or none", file=sys.stderr)
         return 2
-    if args.app:
-        return run_app(args, command)
-    if not command:
+    if not args.app and not command:
         print("whatsent: give the agent command after --, e.g. whatsent run -- claude", file=sys.stderr)
         return 2
-    return run(args, command)
+    if args.runs > 1:
+        return run_many(args, command)
+    return run_app(args, command) if args.app else run(args, command)
 
 
-def run_app(args: argparse.Namespace, extra: list[str]) -> int:
+def run_app(args: argparse.Namespace, extra: list[str], collect: list[dict] | None = None) -> int:
     try:
         app = apps.resolve(args.app)
     except apps.AppError as exc:
@@ -122,10 +129,12 @@ def run_app(args: argparse.Namespace, extra: list[str]) -> int:
               f"to the running copy, which whatsent cannot see.", file=sys.stderr)
         return 2
     args.name = args.name or app.name
-    return run(args, extra, app=app)
+    return run(args, extra, app=app, collect=collect)
 
 
-def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None) -> int:
+def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None,
+        collect: list[dict] | None = None) -> int:
+    """One recorded run. With ``collect``, the run's summary is appended to it."""
     session = Session(args, command, app)
     print(f"whatsent: snapshotting {len(session.roots)} folders...", file=sys.stderr)
     session.prepare()
@@ -177,11 +186,45 @@ whatsent: {how}
     print("whatsent: checking watched folders...", file=sys.stderr)
     summary, html = session.finish()
     print_summary(summary, html)
+    if collect is not None:
+        collect.append(summary)
     if getattr(args, "result_to", None):
         print(f"whatsent: result at {save_result(html.parent / 'result.json', args.result_to, summary)}",
               file=sys.stderr)
     code = session.exit_code
     return code if isinstance(code, int) and code >= 0 else 1
+
+
+def run_many(args: argparse.Namespace, command: list[str]) -> int:
+    """Run the agent ``args.runs`` times, then write one combined result."""
+    summaries: list[dict] = []
+    codes = []
+    for i in range(args.runs):
+        print(f"\nwhatsent: run {i + 1} of {args.runs}", file=sys.stderr)
+        each = copy.copy(args)
+        each.runs, each.result_to = 1, None
+        codes.append(run_app(each, command, summaries) if args.app else run(each, command, collect=summaries))
+    if summaries:
+        combined = board.combine([board.to_result(s) for s in summaries])
+        folder = args.out / f"{datetime.now():%Y%m%d-%H%M%S}-x{len(summaries)}"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "result.json").write_text(json.dumps(combined, indent=2), encoding="utf-8")
+        print_combined(combined, folder / "result.json")
+        if args.result_to:
+            print(f"whatsent: result at {save_result(folder / 'result.json', args.result_to, combined)}",
+                  file=sys.stderr)
+    return next((c for c in codes if c), 0)
+
+
+def print_combined(r: dict, path: Path) -> None:
+    t, n = r["totals"], r["runs"]
+    lines = [f"\nwhatsent: {r['agent']} over {n} runs: {t['leaked']} of {t['canaries']} canaries left this "
+             f"machine in at least one run ({t['leaked_sensitive']} sensitive)"]
+    for c in r["canaries"].values():
+        if c["sent_to"]:
+            lines.append(f"  - {c['short']}: {c['seen_in']}/{n} runs -> {', '.join(c['sent_to'])}")
+    lines.append(f"whatsent: combined result at {path}")
+    print("\n".join(lines), file=sys.stderr)
 
 
 def _terminate(signum: int, frame) -> None:

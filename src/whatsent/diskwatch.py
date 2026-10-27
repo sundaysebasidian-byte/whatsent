@@ -26,6 +26,10 @@ AGENT_DIRS = [".claude", ".codex", ".gemini", ".aider", ".zcode", ".trae", ".cur
 NOISY = ("/Google/Chrome", "/Mozilla", "/BraveSoftware", "/Microsoft Edge", "/com.apple.",
          "/Safari", "/Slack", "/Spotify", "/pip/http", "/Microsoft/Edge", "/Microsoft/Windows")
 NOISY_NAMES = frozenset({"node_modules", "__pycache__"})
+# Stores that Electron and Chromium apps keep for their own windows. A new blob there is the
+# app's UI at work, not an agent staging an upload, so it never counts as related to the agent.
+CHROMIUM_STORES = frozenset({"indexeddb", "blob_storage", "cache_data", "code cache", "gpucache",
+                             "dawncache", "service worker", "local storage", "session storage", "crashpad"})
 
 
 def default_roots() -> list[Path]:
@@ -126,6 +130,9 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
 def related(path: str, agent: str | None) -> bool:
     """Whether ``path`` mentions the agent by name (``Trae CN`` matches ``.trae-cn/``, and
     ``demo-agent (simulated)`` matches ``.demo-agent/``). Without a usable name every file counts."""
+    if any(part.lower() in CHROMIUM_STORES or part.lower().endswith(".indexeddb.blob")
+           for part in re.split(r"[\\/]", path)):
+        return False
     whole = _squash(agent or "")
     names = {w for w in re.findall(r"[a-z0-9]+", (agent or "").lower()) if len(w) >= 4}
     if len(whole) >= 3:
