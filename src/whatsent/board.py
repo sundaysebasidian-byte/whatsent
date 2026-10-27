@@ -15,6 +15,7 @@ from pathlib import Path
 from whatsent.report import CSS, REPO, human_bytes
 
 SCHEMA = 1
+CONTROL_WORST_FIRST = ("missed", "unconfirmed", "unfinished")
 
 
 def to_result(report: dict) -> dict:
@@ -46,6 +47,7 @@ def to_result(report: dict) -> dict:
                    ("canaries", "leaked", "leaked_sensitive", "requests", "hosts", "bytes_out",
                     "not_inspected", "copied_to_disk")},
         "warnings": len(report.get("warnings", [])),
+        "control": (report.get("control") or {}).get("status", "ok"),
     }
 
 
@@ -86,6 +88,8 @@ def combine(results: list[dict]) -> dict:
         **results[0],
         "agent_version": next((r["agent_version"] for r in results if r.get("agent_version")), None),
         "clean": all(r.get("clean") for r in results),
+        # A "not seen" only counts if capture was confirmed in every run, so the worst state wins.
+        "control": next((c for c in CONTROL_WORST_FIRST if any(r.get("control") == c for r in results)), "ok"),
         "date": max(r["date"] for r in results),
         "runs": n,
         "canaries": canaries,
@@ -128,7 +132,7 @@ def rank_key(r: dict) -> tuple:
     c = r["canaries"].values()
     return (
         sum(1 for x in c if x["sensitive"] and x["sent_to"]),
-        r["totals"]["not_inspected"] > 0,
+        r["totals"]["not_inspected"] > 0 or r.get("control", "ok") != "ok",
         sum(1 for x in c if x["sensitive"] and x["on_disk"]),
         sum(1 for x in c if not x["sensitive"] and x["sent_to"]),
         r["totals"]["bytes_out"],
@@ -139,6 +143,8 @@ def status(r: dict) -> tuple[str, str]:
     secrets = sum(1 for x in r["canaries"].values() if x["sensitive"] and x["sent_to"])
     if secrets:
         return "bad", f"sent {secrets} {'secret' if secrets == 1 else 'secrets'}"
+    if r.get("control", "ok") != "ok":
+        return "warn", "unconfirmed: task file not seen"
     if r["totals"]["not_inspected"]:
         return "warn", "incomplete: traffic not inspected"
     return "good", "no secrets seen leaving"
@@ -223,6 +229,7 @@ leave the machine, where they go, and what could not be inspected.</p>
 <li><b>Project files sent</b>: the task file is expected; an unrelated file or the file listing shows how much context goes along.</li>
 <li><b>Not inspected</b>: connections whatsent could not read (pinned certificates, traffic that ignored the proxy). A row with no leaks but traffic not inspected is incomplete, not clean.</li>
 <li>With several runs, a canary counts as sent if any run sent it, <b>2/3</b> says in how many, and uploads are the average per run.</li>
+<li><b>Unconfirmed</b>: every agent must send the task file to its model. When it was never seen, capture may have missed traffic or the agent did not finish the task, so a clean row proves nothing.</li>
 <li>Ranked by secrets sent, then incomplete runs, secrets copied to disk, project files sent and bytes uploaded.</li>
 </ol></section>
 <section><h2>Add a result</h2><p class="note" style="font-size:14px">Run <code>whatsent run -- &lt;agent&gt;</code>

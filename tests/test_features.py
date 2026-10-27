@@ -276,6 +276,20 @@ def test_combine_counts_a_canary_if_any_run_sent_it():
     assert "dotenv 1/2" in html and "task 2/2" in html and "2 runs" in html
 
 
+def test_combine_is_only_confirmed_if_every_run_was():
+    ok = _result({"task": ["api.x"]}, [("api.x", 1, 10)], control="ok")
+    old = _result({"task": ["api.x"]}, [("api.x", 1, 10)])  # results made before the control existed
+    assert board.combine([ok, old])["control"] == "ok"
+    for bad in ("unfinished", "unconfirmed", "missed"):
+        r = board.combine([ok, _result({"task": []}, [("api.x", 1, 10)], control=bad)])
+        assert r["control"] == bad
+        assert board.status(r)[0] == "warn" and "unconfirmed" in board.status(r)[1]
+    worst = board.combine([_result({"task": []}, [], control="unfinished"), _result({"task": []}, [], control="missed")])
+    assert worst["control"] == "missed"
+    rows = board.latest_per_agent([board.combine([ok, _result({"task": []}, [], control="unconfirmed")])])
+    assert "unconfirmed: task file not seen" in board.render(rows)
+
+
 def test_several_runs_give_one_combined_result(tmp_path):
     pytest.importorskip("mitmproxy")
     out, results = tmp_path / "out", tmp_path / "results"
