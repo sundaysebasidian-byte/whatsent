@@ -7,7 +7,6 @@ import copy
 import json
 import os
 import platform
-import re
 import shutil
 import signal
 import subprocess
@@ -79,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     board = sub.add_parser("board", help="build the leaderboard page from report.json files")
     board.add_argument("reports", nargs="+", type=Path, help="report.json files or folders containing them")
     board.add_argument("-o", "--out", type=Path, default=Path("site"), help="output folder (default: ./site)")
+    check = sub.add_parser("check", help="check result.json files before they are added to the leaderboard")
+    check.add_argument("results", nargs="+", type=Path, help="result.json files or folders containing them")
     return p
 
 
@@ -90,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "ui":
         from whatsent.ui import run_ui
         return run_ui(args)
+    if args.cmd == "check":
+        from whatsent.check import check
+        return check(args.results)
     if args.cmd == "board":
         from whatsent.board import build
         return build(args.reports, args.out)
@@ -236,11 +240,13 @@ def _terminate(signum: int, frame) -> None:
 
 
 def save_result(result: Path, folder: Path, summary: dict) -> Path:
-    """Copy result.json to ``folder`` as <agent>-<version>[-clean].json, the name the leaderboard expects."""
-    parts = (summary["agent"], summary.get("agent_version") or "unversioned", "clean" if summary.get("clean") else "")
-    name = "-".join(re.sub(r"[^a-z0-9._+]+", "-", str(part).lower()).strip("-") for part in parts if part)
+    """Copy result.json to ``folder`` as <agent>-<version>[-clean].json, the name the leaderboard expects.
+    A file already there is kept: this batch of runs gets -2, -3 ... and the board combines them."""
     folder.mkdir(parents=True, exist_ok=True)
-    return Path(shutil.copyfile(result, folder / f"{name}.json"))
+    batch = 1
+    while (folder / board.result_name(summary, batch)).exists():
+        batch += 1
+    return Path(shutil.copyfile(result, folder / board.result_name(summary, batch)))
 
 
 def popen(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen:

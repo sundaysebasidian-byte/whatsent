@@ -276,6 +276,29 @@ def test_combine_counts_a_canary_if_any_run_sent_it():
     assert "dotenv 1/2" in html and "task 2/2" in html and "2 runs" in html
 
 
+def test_a_second_batch_of_runs_adds_to_the_first():
+    first = _result({"task": ["api.x"], "git": ["api.x"]}, [("api.x", 10, 1000)], runs=3)
+    first["canaries"]["task"]["seen_in"], first["canaries"]["git"]["seen_in"] = 3, 1
+    second = _result({"task": ["api.x"], "git": []}, [("api.x", 20, 3000)], runs=3, date="2026-10-27")
+    second["canaries"]["task"]["seen_in"], second["canaries"]["git"]["seen_in"] = 3, 0
+    other = _result({"task": ["api.x"]}, [("api.x", 1, 1)], agent_version="2")
+    rows = board.latest_per_agent([first, second, other])
+    assert len(rows) == 2  # another version is its own row
+    row = next(r for r in rows if r["agent_version"] == "1")
+    assert row["runs"] == 6 and row["date"] == "2026-10-27"
+    assert row["canaries"]["task"]["seen_in"] == 6 and row["canaries"]["git"]["seen_in"] == 1
+    assert [(d["requests"], d["bytes_out"]) for d in row["destinations"]] == [(15, 2000)]  # per run, weighted
+    assert "git 1/6" in board.render([row])
+
+
+def test_saving_a_result_never_overwrites_an_earlier_batch(tmp_path):
+    src = tmp_path / "result.json"
+    src.write_text("{}", encoding="utf-8")
+    summary = {"agent": "x", "agent_version": "1", "clean": True}
+    names = [save_result(src, tmp_path / "r", summary).name for _ in range(3)]
+    assert names == ["x-1-clean.json", "x-1-clean-2.json", "x-1-clean-3.json"]
+
+
 def test_combine_is_only_confirmed_if_every_run_was():
     ok = _result({"task": ["api.x"]}, [("api.x", 1, 10)], control="ok")
     old = _result({"task": ["api.x"]}, [("api.x", 1, 10)])  # results made before the control existed

@@ -71,7 +71,7 @@ whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspa
 
 Agent 每次表现并不相同，一次运行的结果可能有误导。`--runs 3` 会把 Agent 各在全新的金丝雀项目里跑三遍，合并成一份结果：只要有一遍发出了某个金丝雀就算发出，测评榜上会标出几遍里出现了几遍（比如 `2/3`），上传量取每遍的平均。
 
-没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。
+没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。已有的文件不会被覆盖：再跑一批会存成 `-2`、`-3`，榜单会把它们合并。
 
 如果设置了 `HTTPS_PROXY`（公司或 VPN 代理），whatsent 会转发到它，因为 Agent 本来就只能通过它上网。用 `--upstream URL` 指定别的代理，`--upstream none` 表示直连。只支持 HTTP(S) 代理，SOCKS 代理会以警告提示。
 
@@ -106,7 +106,7 @@ whatsent run --app trae --capture local:Trae
 | `--timeout 秒数` | 超过这个时间就停掉 Agent |
 | `--upstream URL\|none` | 转发到指定的 HTTP(S) 代理；默认用 `HTTPS_PROXY` 里的代理（如果有） |
 | `--out DIR` | 报告目录（默认 `./whatsent-report`） |
-| `--result-to DIR` | 同时把 `result.json` 复制为 `DIR/<agent>-<版本>[-clean].json` |
+| `--result-to DIR` | 同时把 `result.json` 复制为 `DIR/<agent>-<版本>[-clean].json`；已有同名文件会保留，这一份存成 `-2`、`-3` |
 | `--watch DIR` | 额外监控某个目录（可重复） |
 | `--no-default-watch` | 只监控 `--watch` 指定的目录 |
 | `--port N` | 固定代理端口 |
@@ -124,7 +124,7 @@ whatsent run --app trae --capture local:Trae
 
 ## 测评榜
 
-`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
+`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。`whatsent check results/` 会拒绝带了汇总以外内容、或数字对不上的文件，CI 在每个 PR 上都会跑它。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
 
 测评榜展示的是 [`results/`](results/) 里的真实结果；这个目录为空时，才展示虚构 Agent 的示例数据，页面上会明确标注为示例（见 [examples/make_examples.py](examples/make_examples.py)）。
 
@@ -143,8 +143,8 @@ whatsent run --app trae --capture local:Trae
 - 加密上传只能看到目的地和大小，看不到内容。落盘监控只有在工具把数据暂存在被监控目录时才有用。
 - 落盘监控会列出被监控目录里所有新出现的大文件，包括运行期间其他程序写的；路径里没出现 Agent 名称的文件会归到"可能来自其他程序"一栏。运行时间尽量短，其他应用尽量别动。
 - 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。
-- Agent 每次表现并不相同。同一个任务跑三次，`codex` 有一次发出了 git 历史，有一次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每个 Agent 三次运行合并而成的（`--runs 3`）；要拿结果做对比，请用 `--runs`。
-- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，各跑三次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
+- Agent 每次表现并不相同。同一个任务跑六次，`codex` 有一次发出了 git 历史、两次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每个 Agent 六次运行合并而成的，分两批、每批三次（`--runs 3`）；要拿结果做对比，请用 `--runs`。
+- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，各跑六次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
 
 ## 开发
 
