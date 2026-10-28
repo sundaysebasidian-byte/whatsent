@@ -71,7 +71,7 @@ whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspa
 
 Agents vary from run to run, so a result from one run can mislead. `--runs 3` runs the agent three times, each in a fresh canary project, and writes one combined result: a canary counts as sent if any run sent it, the board shows in how many (for example `2/3`), and uploads are averaged per run.
 
-The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`.
+The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`. A file already there is never overwritten: a later batch of runs is saved as `-2`, `-3` and the board combines them.
 
 If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or `--upstream none` to connect directly. Only HTTP(S) proxies work; a SOCKS proxy is reported as a warning.
 
@@ -106,7 +106,7 @@ whatsent run --app trae --capture local:Trae
 | `--timeout SECONDS` | Stop the agent after this long |
 | `--upstream URL\|none` | Forward to this HTTP(S) proxy; default is the one in `HTTPS_PROXY`, if any |
 | `--out DIR` | Where reports go (default `./whatsent-report`) |
-| `--result-to DIR` | Also copy `result.json` to `DIR/<agent>-<version>[-clean].json` |
+| `--result-to DIR` | Also copy `result.json` to `DIR/<agent>-<version>[-clean].json`; a file already there is kept and this one gets `-2`, `-3` |
 | `--watch DIR` | Also watch this folder for files the agent writes (repeatable) |
 | `--no-default-watch` | Watch only the `--watch` folders |
 | `--port N` | Fixed proxy port |
@@ -124,7 +124,7 @@ By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.g
 
 ## Leaderboard
 
-`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
+`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. `whatsent check results/` rejects files that carry more than aggregates or whose numbers do not add up, and CI runs it on every pull request. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
 
 Results from [`results/`](results/) are what the board shows. While that folder is empty it shows made-up examples of fictional agents, labelled as examples ([examples/make_examples.py](examples/make_examples.py)).
 
@@ -143,8 +143,8 @@ Results from [`results/`](results/) are what the board shows. While that folder 
 - Encrypted uploads can only be measured (destination and size), not read. The disk watch helps only if the tool stages the data in a watched folder.
 - Disk watch lists any new large file in watched folders, including ones other programs wrote during the run. Files whose path does not mention the agent are grouped as "probably from other programs". Keep runs short and other apps quiet.
 - A watched folder that takes more than 45 s to scan, or holds over a million files, is only partly scanned. The report then carries a warning and the disk findings for that folder may be incomplete.
-- Agents vary between runs. In three runs of the same task, `codex` sent the git history in one and the file listing in one, and `copilot` listed the files in one. The published results are therefore combined from three runs each (`--runs 3`); use `--runs` for anything you plan to compare.
-- Real agents tested so far: `claude`, `codex`, `codebuddy` and `copilot` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`, `codebuddy -p`, `copilot -p`) with `--clean`, three runs each. `copilot` ran with `--allow-tool=write` only, so it could edit files but not run shell commands. Interactive sessions, IDE agents, other agents, and real runs on Windows and Linux are still to come.
+- Agents vary between runs. In six runs of the same task, `codex` sent the git history in one and the file listing in two, and `copilot` listed the files in one. The published results therefore combine six runs each, two batches of three (`--runs 3`); use `--runs` for anything you plan to compare.
+- Real agents tested so far: `claude`, `codex`, `codebuddy` and `copilot` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`, `codebuddy -p`, `copilot -p`) with `--clean`, six runs each. `copilot` ran with `--allow-tool=write` only, so it could edit files but not run shell commands. Interactive sessions, IDE agents, other agents, and real runs on Windows and Linux are still to come.
 
 ## Development
 

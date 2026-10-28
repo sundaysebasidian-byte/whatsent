@@ -36,8 +36,8 @@ def test_board_from_examples(tmp_path):
     assert "Example data." in html and "not measurements of any real product" in html
 
 
-def test_latest_run_per_agent_wins():
-    old = {"agent": "A", "agent_version": "1", "date": "2026-01-01", "sample": False}
-    new = {**old, "date": "2026-02-01"}
+def test_results_of_the_same_agent_are_combined_under_the_newest_date():
+    old = json.loads((EXAMPLES / "example-agent-a.json").read_text(encoding="utf-8"))
+    new = {**old, "date": "2099-02-01"}
     (row,) = board.latest_per_agent([old, new])
-    assert row["date"] == "2026-02-01" and row["runs"] == 2
+    assert row["date"] == "2099-02-01" and row["runs"] == 2

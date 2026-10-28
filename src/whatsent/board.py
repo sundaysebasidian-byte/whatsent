@@ -8,6 +8,7 @@ commands, prompts or canary values.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from html import escape
 from pathlib import Path
@@ -52,24 +53,26 @@ def to_result(report: dict) -> dict:
 
 
 def combine(results: list[dict]) -> dict:
-    """One result from several runs of the same agent. A canary counts as sent if any run sent
-    it (``seen_in`` says in how many); uploads are averaged per run."""
-    n = len(results)
+    """One result from several runs, or batches of runs, of the same agent. A canary counts as sent
+    if any run sent it (``seen_in`` says in how many); uploads are averaged per run. A result that
+    is already combined counts for the runs it holds."""
+    weights = [r.get("runs", 1) for r in results]
+    n = sum(weights)
     canaries = {}
     for cid, first in results[0]["canaries"].items():
-        runs = [r["canaries"][cid] for r in results if cid in r["canaries"]]
+        have = [r["canaries"][cid] for r in results if cid in r["canaries"]]
         canaries[cid] = {
             "short": first["short"], "sensitive": first["sensitive"],
-            "sent_to": sorted({h for x in runs for h in x["sent_to"]}),
-            "on_disk": any(x["on_disk"] for x in runs),
-            "seen_in": sum(1 for x in runs if x["sent_to"]),
+            "sent_to": sorted({h for x in have for h in x["sent_to"]}),
+            "on_disk": any(x["on_disk"] for x in have),
+            "seen_in": sum(x["seen_in"] if "seen_in" in x else int(bool(x["sent_to"])) for x in have),
         }
     hosts: dict[str, dict] = {}
-    for r in results:
+    for r, w in zip(results, weights):
         for d in r["destinations"]:
             h = hosts.setdefault(d["host"], {"host": d["host"], "requests": 0, "bytes_out": 0})
-            h["requests"] += d["requests"]
-            h["bytes_out"] += d["bytes_out"]
+            h["requests"] += d["requests"] * w
+            h["bytes_out"] += d["bytes_out"] * w
     destinations = sorted(({"host": h["host"], "requests": round(h["requests"] / n),
                             "bytes_out": round(h["bytes_out"] / n)} for h in hosts.values()),
                           key=lambda d: d["bytes_out"], reverse=True)
@@ -99,6 +102,13 @@ def combine(results: list[dict]) -> dict:
     }
 
 
+def result_name(r: dict, batch: int = 1) -> str:
+    """File name for a result: <agent>-<version>[-clean].json, with -2, -3 ... for later batches of runs."""
+    parts = (r["agent"], r.get("agent_version") or "unversioned", "clean" if r.get("clean") else "",
+             str(batch) if batch > 1 else "")
+    return "-".join(re.sub(r"[^a-z0-9._+]+", "-", str(part).lower()).strip("-") for part in parts if part) + ".json"
+
+
 def collect(paths: list[Path]) -> list[dict]:
     files: list[Path] = []
     for p in paths:
@@ -118,14 +128,16 @@ def collect(paths: list[Path]) -> list[dict]:
 
 
 def latest_per_agent(results: list[dict]) -> list[dict]:
-    best: dict[tuple, dict] = {}
-    runs: dict[tuple, int] = {}
+    """One row per agent version and config. Results of the same one (a second batch of runs) are combined."""
+    groups: dict[tuple, list[dict]] = {}
     for r in results:
         key = (r["agent"].lower(), r.get("agent_version") or "", r.get("sample", False), bool(r.get("clean")))
-        runs[key] = runs.get(key, 0) + r.get("runs", 1)
-        if key not in best or r["date"] >= best[key]["date"]:
-            best[key] = r
-    return [{**r, "runs": runs[k]} for k, r in best.items()]
+        groups.setdefault(key, []).append(r)
+    rows = []
+    for group in groups.values():
+        group.sort(key=lambda r: r["date"], reverse=True)  # the newest one's details win
+        rows.append(combine(group) if len(group) > 1 else {**group[0], "runs": group[0].get("runs", 1)})
+    return rows
 
 
 def rank_key(r: dict) -> tuple:
