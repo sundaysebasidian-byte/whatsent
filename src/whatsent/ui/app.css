@@ -168,7 +168,8 @@ border:1px solid rgba(255,99,105,.28);animation:scrin .4s var(--spring) both,bre
 .share .who{margin-top:18px;display:flex;gap:8px;align-items:center;font-weight:600;color:var(--ink2)}
 .share h2{margin:4px 0 0;font-size:30px;line-height:1.2;letter-spacing:-.02em;font-weight:700}
 .share .subline{margin:4px 0 0;font-size:15px}
-.share.bad .subline{color:var(--red-ink)}.share.warn .subline{color:var(--amber-ink)}.share.good .subline{color:#a7f0c1}
+.share.unknown{background:radial-gradient(120% 90% at 0% 0%,rgba(154,153,166,.24),rgba(154,153,166,0) 55%),radial-gradient(90% 80% at 100% 100%,rgba(116,98,238,.22),rgba(116,98,238,0) 60%),#1d1c23}
+.share.bad .subline{color:var(--red-ink)}.share.warn .subline{color:var(--amber-ink)}.share.good .subline{color:#a7f0c1}.share.unknown .subline{color:#c8c7d0}
 .checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px;margin-top:18px}
 .ck{display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.04)}
 .ck .m{flex-shrink:0;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
@@ -176,6 +177,7 @@ border:1px solid rgba(255,99,105,.28);animation:scrin .4s var(--spring) both,bre
 .ck small{display:block;font-size:12px;color:var(--mute);overflow-wrap:anywhere}
 .ck.ok .m{background:rgba(74,222,128,.16);color:var(--green)}
 .ck.file .m{background:rgba(251,191,36,.16);color:var(--amber)}
+.ck.unk .m{background:rgba(154,153,166,.16);color:#c8c7d0}
 .ck.secret{background:rgba(255,99,105,.12)}.ck.secret .m{background:var(--red);color:#1d0608}
 .stats{display:flex;gap:28px;flex-wrap:wrap;margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)}
 .toast{display:flex;gap:8px;align-items:center;border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;color:#c9f5d8;background:rgba(74,222,128,.1);

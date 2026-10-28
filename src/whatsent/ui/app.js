@@ -32,7 +32,7 @@
       safeLine: (n) => `你的真实项目、系统代理、系统证书和 ${n} 的设置都保持原样。`,
       stepsDone: (a, b) => `${a} / ${b} 步完成`,
       liveTitle: (n) => `正在记录 ${n}`, sample: '示例数据',
-      todoApp: (n) => `粘贴到 ${n} 的 AI 对话`, todoCli: '粘贴给 Agent', todoDemo: '演示 Agent 会自己发请求',
+      todoApp: (n) => `粘贴到 ${n} 的 AI 对话，等它改好`, todoCli: '粘贴给 Agent，等它改好', todoDemo: '演示 Agent 会自己发请求',
       copy: '复制', copied: '已复制', finish: '结束测试', finishing: '生成报告…',
       stRequests: '请求', stHosts: '目的地', stUp: '已上传', stGaps: '未能检查',
       flowTitle: '流量去向', local: '本机', more: (n) => `另外 ${n} 个`,
@@ -43,7 +43,16 @@
       dur: (s) => (s < 90 ? `${Math.round(s)} 秒` : `${Math.round(s / 60)} 分钟`),
       headline: (n, N) => `${N} 个假标记里有 ${n} 个离开了这台电脑`,
       subSecret: (k) => `其中 ${k} 个是密钥`, subFiles: '都是普通项目文件，没有密钥',
-      headGap: (N) => `没看到 ${N} 个假标记外发`, subGap: (g) => `但有 ${g} 个连接无法检查`,
+      headGap: (N) => `没看到 ${N} 个假标记外发`, subGap: (g, names) => `但有 ${g} 个连接无法检查：${names}`,
+      gapExtra: (g, names) => `；${g} 个连接无法检查：${names}`,
+      ctlHead: { missed: '这次检测失效了', unconfirmed: '结果没法确认', unfinished: '测试没做完' },
+      ctlSub: { missed: '任务文件存进了本地，却没看到它发出', unconfirmed: 'Agent 修好了 bug，却没看到任务文件发出', unfinished: 'Agent 没修完 bug 就结束了' },
+      ctlHelp: {
+        missed: 'Agent 显然读过任务文件，它却没出现在 whatsent 能读的流量里，“没看到”的几项都不可信。请把 Agent 名称和版本发到 GitHub issue。',
+        unconfirmed: '任务文件一定会发给模型，whatsent 靠它确认抓包有效。这次没看到，“没看到”的几项不能当作干净，请重测一次。',
+        unfinished: '“没看到”的几项不能当作干净。重测时粘贴提示词，等 Agent 说改好了再退出。',
+      },
+      expected: '应该发出，但没看到', unconfirmed: '没看到，未确认', retest: '重测',
       headGood: (N) => `${N} 个假标记都没离开这台电脑`, subGood: '在 whatsent 能检查的所有流量里',
       diskExtra: (k) => `，另有 ${k} 个被复制到本地文件`,
       notSeenLong: '没有发现外发', diskOnly: '没发出，但被复制到本地文件', sentTo: (h) => `→ ${h}`,
@@ -87,7 +96,7 @@
       safeLine: (n) => `Your real projects, system proxy, certificates and ${n} settings stay as they are.`,
       stepsDone: (a, b) => `${a} of ${b} steps done`,
       liveTitle: (n) => `Recording ${n}`, sample: 'Sample data',
-      todoApp: (n) => `Paste into the ${n} AI chat`, todoCli: 'Paste into the agent', todoDemo: 'The demo agent sends requests by itself',
+      todoApp: (n) => `Paste into the ${n} AI chat and let it finish`, todoCli: 'Paste into the agent and let it finish', todoDemo: 'The demo agent sends requests by itself',
       copy: 'Copy', copied: 'Copied', finish: 'End test', finishing: 'Building report…',
       stRequests: 'Requests', stHosts: 'Destinations', stUp: 'Uploaded', stGaps: 'Not inspected',
       flowTitle: 'Where traffic goes', local: 'This computer', more: (n) => `${n} more`,
@@ -98,7 +107,16 @@
       dur: (s) => (s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)} min`),
       headline: (n, N) => `${n} of ${N} markers left this computer`,
       subSecret: (k) => `including ${k} ${k === 1 ? 'secret' : 'secrets'}`, subFiles: 'only ordinary project files, no secrets',
-      headGap: (N) => `0 of ${N} markers seen leaving`, subGap: (g) => `but ${g} ${g === 1 ? 'connection' : 'connections'} could not be inspected`,
+      headGap: (N) => `0 of ${N} markers seen leaving`, subGap: (g, names) => `but ${g} ${g === 1 ? 'connection' : 'connections'} could not be inspected: ${names}`,
+      gapExtra: (g, names) => `; ${g} not inspected: ${names}`,
+      ctlHead: { missed: 'Detection failed in this run', unconfirmed: 'Result not confirmed', unfinished: 'Run incomplete' },
+      ctlSub: { missed: 'the agent saved the task file locally, but it was never seen leaving', unconfirmed: 'the agent fixed the bug, but the task file was never seen leaving', unfinished: 'the agent stopped before fixing the bug' },
+      ctlHelp: {
+        missed: 'The agent clearly read the task file, yet it never showed up in traffic whatsent could read, so the "not seen" rows prove nothing. Please open a GitHub issue with the agent name and version.',
+        unconfirmed: 'Every agent sends the task file to its model, so whatsent uses it to check that capture works. It was not seen this time, so the "not seen" rows are not a clean result. Run again.',
+        unfinished: 'The "not seen" rows are not a clean result. Run again: paste the prompt and exit only after the agent says it is done.',
+      },
+      expected: 'expected to leave, not seen', unconfirmed: 'not seen, unconfirmed', retest: 'Run again',
       headGood: (N) => `0 of ${N} markers left this computer`, subGood: 'in all the traffic whatsent could inspect',
       diskExtra: (k) => `; ${k} more copied into local files`,
       notSeenLong: 'not seen leaving', diskOnly: 'not sent, but copied into local files', sentTo: (h) => `→ ${h}`,
@@ -766,19 +784,26 @@
   }
 
   // ---------- report ----------
+  function controlStatus(r) { return (r.control && r.control.status) || 'ok'; }
   function verdict(r, t) {
     const tt = r.totals;
     const diskSecrets = r.canaries.filter((c) => c.sensitive && c.on_disk && !c.sent_to.length).length;
     const extra = diskSecrets ? t.diskExtra(diskSecrets) : '';
+    const gapX = tt.not_inspected ? t.gapExtra(tt.not_inspected, r.gap_names || '') : '';
+    const ctl = controlStatus(r);
     if (tt.leaked_sensitive) return ['bad', t.headline(tt.leaked, tt.canaries), t.subSecret(tt.leaked_sensitive) + extra];
-    if (tt.leaked) return ['warn', t.headline(tt.leaked, tt.canaries), t.subFiles + extra];
-    if (tt.not_inspected) return ['warn', t.headGap(tt.canaries), t.subGap(tt.not_inspected) + extra];
+    if (ctl !== 'ok') return ['unknown', t.ctlHead[ctl], t.ctlSub[ctl] + gapX];
+    if (tt.leaked) return ['warn', t.headline(tt.leaked, tt.canaries), t.subFiles + extra + gapX];
+    if (tt.not_inspected) return ['warn', t.headGap(tt.canaries), t.subGap(tt.not_inspected, r.gap_names || '') + extra];
     return ['good', t.headGood(tt.canaries), t.subGood + extra];
   }
   function checkRows(r, t) {
+    const ctl = controlStatus(r);
     return r.canaries.map((c) => {
+      if (c.id === 'task_file' && ctl !== 'ok' && !c.sent_to.length) return { cls: 'file', mark: '?', label: canaryLabel(c), where: t.expected };
       if (c.sent_to.length) return { cls: c.sensitive ? 'secret' : 'file', mark: c.sensitive ? '✕' : '→', label: canaryLabel(c), where: t.sentTo(c.sent_to.join(', ')) };
       if (c.on_disk) return { cls: c.sensitive ? 'secret' : 'file', mark: '!', label: canaryLabel(c), where: t.diskOnly };
+      if (ctl !== 'ok') return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
       return { cls: 'ok', mark: '✓', label: canaryLabel(c), where: t.notSeenLong };
     });
   }
@@ -792,6 +817,10 @@
     const toastBox = h('div');
     const notices = [];
     if (r.warnings.some((w) => w.includes('exited after'))) notices.push(h('div', { class: 'notice' }, h('span', {}, t.quickExit(reportName(r)))));
+    if (controlStatus(r) !== 'ok') {
+      const retry = S.lastStart && !(S.job && S.job.demo) ? btn(t.retest, null, () => startJob(S.lastStart), 'soft') : null;
+      notices.push(h('div', { class: 'notice' }, h('span', {}, t.ctlHelp[controlStatus(r)]), retry));
+    }
     if (r.totals.not_inspected && r.capture === 'env' && !(S.job && S.job.demo) && S.lastStart) {
       notices.push(h('div', { class: 'notice' }, h('span', {}, t.gapsNote(r.totals.not_inspected)),
         btn(t.deepRetry, null, () => { S.deep = true; startJob(S.lastStart); }, 'soft')));
@@ -834,8 +863,8 @@
     const W = 1000; const P = 48; const scale = 2;
     const sans = getComputedStyle(document.body).fontFamily;
     const mono = '"SF Mono", ui-monospace, Menlo, Consolas, monospace';
-    const glow = { bad: '255,99,105', warn: '251,191,36', good: '74,222,128' }[tone];
-    const subInk = { bad: '#ffb4b6', warn: '#f3d48a', good: '#a7f0c1' }[tone];
+    const glow = { bad: '255,99,105', warn: '251,191,36', good: '74,222,128', unknown: '154,153,166' }[tone];
+    const subInk = { bad: '#ffb4b6', warn: '#f3d48a', good: '#a7f0c1', unknown: '#c8c7d0' }[tone];
     const checks = checkRows(r, t);
     const canvas = document.createElement('canvas');
     let ctx = canvas.getContext('2d');
@@ -888,7 +917,7 @@
         if (!draw) return;
         rrect(ctx, x, yy, colW, boxH, 14);
         ctx.fillStyle = c.cls === 'secret' ? 'rgba(255,99,105,.14)' : 'rgba(255,255,255,.05)'; ctx.fill();
-        const mc = { ok: ['rgba(74,222,128,.18)', '#4ade80'], file: ['rgba(251,191,36,.18)', '#fbbf24'], secret: ['#ff6369', '#1d0608'] }[c.cls];
+        const mc = { ok: ['rgba(74,222,128,.18)', '#4ade80'], file: ['rgba(251,191,36,.18)', '#fbbf24'], secret: ['#ff6369', '#1d0608'], unk: ['rgba(154,153,166,.18)', '#c8c7d0'] }[c.cls];
         ctx.beginPath(); ctx.arc(x + 30, yy + boxH / 2, 13, 0, Math.PI * 2); ctx.fillStyle = mc[0]; ctx.fill();
         text(c.mark, x + 30, yy + boxH / 2 + 6, `700 16px ${sans}`, mc[1], 'center');
         text(trunc(c.label, 30), x + 56, yy + 31, `500 19px ${sans}`, '#f2f2f5');

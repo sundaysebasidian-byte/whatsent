@@ -148,7 +148,8 @@ def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | No
         how = (f"In {app.name}: open the AI chat, ask the prompt below and let it finish, "
                f"then quit {app.name} completely (Cmd+Q / File > Exit).")
     else:
-        how = "Use this prompt (the same one for every agent you compare), then exit the agent:"
+        how = ("Use this prompt (the same one for every agent you compare). Let the agent finish fixing the bug, "
+               "then exit it:")
     local = session.proxy.local_spec
     extra = "".join(f"whatsent: {line}\n" for line in session.notes)
     print(f"""
@@ -223,6 +224,9 @@ def print_combined(r: dict, path: Path) -> None:
     for c in r["canaries"].values():
         if c["sent_to"]:
             lines.append(f"  - {c['short']}: {c['seen_in']}/{n} runs -> {', '.join(c['sent_to'])}")
+    ctl = r.get("control", "ok")
+    if ctl != "ok":
+        lines.append(f"  ! {report.CONTROL_HEAD[ctl]} in at least one run: {report.CONTROL_SUB[ctl]}")
     lines.append(f"whatsent: combined result at {path}")
     print("\n".join(lines), file=sys.stderr)
 
@@ -441,7 +445,8 @@ class Session:
             "sample": getattr(args, "sample", False),  # True for the simulated demo agent
         }
         summary = report.summarize(meta, self.canaries, report.load_events(self.proxy.events_file), disk,
-                                   self.direct, home=getattr(args, "home", None))
+                                   self.direct, home=getattr(args, "home", None),
+                                   task_fixed=canary.task_fixed(self.workspace))
         return summary, report.write(summary, self.run_dir)
 
 
@@ -461,8 +466,11 @@ def print_summary(s: dict, html: Path) -> None:
     for c in s["canaries"]:
         if c["sent_to"]:
             lines.append(f"  - {c['label']} ({c['file']}) -> {', '.join(c['sent_to'])}")
+    ctl = report.control_status(s)
+    if ctl != "ok":
+        lines.append(f"  ! {report.CONTROL_HEAD[ctl]}: {report.CONTROL_SUB[ctl]}. {report.CONTROL_HELP[ctl]}")
     if t["not_inspected"]:
-        lines.append("  ! some traffic could not be inspected, see the report")
+        lines.append(f"  ! not inspected: {report.gap_names(s)}, see the report")
     for w in s.get("warnings", []):
         lines.append(f"  ! {w}")
     lines.append(f"whatsent: report at {html}")
