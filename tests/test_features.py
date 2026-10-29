@@ -319,8 +319,12 @@ def test_several_runs_give_one_combined_result(tmp_path):
     code = main(["run", "--out", str(out), "--no-default-watch", "--runs", "2", "--result-to", str(results),
                  "--agent-version", "1", "--name", "twice", "--", sys.executable, "-c", "pass"])
     assert code == 0
-    assert len([d for d in out.iterdir() if not d.name.endswith("-x2")]) == 2  # one report folder per run
+    (batch,) = out.iterdir()
+    assert batch.name.endswith("-x2")
+    assert len([d for d in batch.iterdir() if d.is_dir()]) == 2  # per-run evidence stays inside the batch
     combined = json.loads((results / "twice-1.json").read_text(encoding="utf-8"))
     assert combined["runs"] == 2 and combined["agent"] == "twice"
     assert all("seen_in" in c for c in combined["canaries"].values())
+    (collected,) = board.collect([out])
+    assert collected["runs"] == 2  # neither workspace JSON nor nested runs are counted again
     assert main(["run", "--runs", "0", "--", "x"]) == 2

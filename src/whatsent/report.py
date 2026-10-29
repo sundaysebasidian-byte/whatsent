@@ -11,11 +11,20 @@ from pathlib import Path
 
 def load_events(path: Path) -> list[dict]:
     events = []
+    requests = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 try:
-                    events.append(json.loads(line))
+                    event = json.loads(line)
+                    flow_id = event.get("flow_id") if event.get("type") == "http" else None
+                    if flow_id and flow_id in requests:
+                        prior = events[requests[flow_id]]
+                        events[requests[flow_id]] = {**event, "ts": prior["ts"]}
+                    else:
+                        if flow_id:
+                            requests[flow_id] = len(events)
+                        events.append(event)
                 except json.JSONDecodeError:
                     pass  # a partial last line if the proxy was killed mid-write
     return events
@@ -227,6 +236,8 @@ def _verdict(s: dict) -> tuple[str, str, str]:
     if ctl != "ok":
         return "unknown", CONTROL_HEAD[ctl], \
             f"{t['leaked']} of {t['canaries']} canaries seen leaving, but {CONTROL_SUB[ctl]}{gap_extra}"
+    if s.get("warnings"):
+        return "unknown", "Run has incomplete coverage", "Review the run warnings before interpreting missing canaries"
     if t["leaked"]:
         return "warn", f"{t['leaked']} of {t['canaries']} canaries left this machine", \
             f"only ordinary project files, no secrets{extra}{gap_extra}"
@@ -309,6 +320,7 @@ def render_html(s: dict) -> str:
 
     ctl = control_status(s)
     unconfirmed_task = ctl != "ok"
+    incomplete = unconfirmed_task or bool(s.get("warnings")) or bool(t["not_inspected"])
     checks = []
     for c in s["canaries"]:
         if c["id"] == "task_file" and unconfirmed_task and not c["sent_to"]:
@@ -319,7 +331,7 @@ def render_html(s: dict) -> str:
             where = "sent to " + ", ".join(c["sent_to"])
         elif c["on_disk"]:
             mark, cls, where = "!", "leak" if c["sensitive"] else "", "not sent, but copied into local files"
-        elif unconfirmed_task:
+        elif incomplete:
             mark, cls, where = "–", "", "not seen, unconfirmed"
         else:
             mark, cls, where = "✓", "", "not seen leaving"
@@ -332,7 +344,7 @@ def render_html(s: dict) -> str:
                              for h in c["sent_to"])
         elif c["id"] == "task_file" and unconfirmed_task:
             status = '<span class="chip warn">expected to leave, not seen</span>'
-        elif unconfirmed_task:
+        elif incomplete:
             status = '<span class="chip">not seen, unconfirmed</span>'
         else:
             status = '<span class="chip good">not seen leaving</span>'

@@ -53,10 +53,21 @@ def test_resolve_unknown_name():
 
 
 def test_app_command_routes_through_proxy(tmp_path):
+    import base64
+    import hashlib
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from whatsent.demo import self_signed
+
     app = apps.ResolvedApp("X", tmp_path / "x")
-    cmd = apps.command(app, 8123, tmp_path / "ws", ["--verbose"])
+    cert, _ = self_signed(tmp_path)
+    key = x509.load_pem_x509_certificate(cert.read_bytes()).public_key()
+    expected = base64.b64encode(hashlib.sha256(key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    cmd = apps.command(app, 8123, tmp_path / "ws", ["--verbose"], cert)
     assert cmd[0] == str(tmp_path / "x") and cmd[-1] == str(tmp_path / "ws")
-    assert "--proxy-server=http://127.0.0.1:8123" in cmd and "--ignore-certificate-errors" in cmd
+    assert "--proxy-server=http://127.0.0.1:8123" in cmd
+    assert f"--ignore-certificate-errors-spki-list={expected}" in cmd
+    assert "--ignore-certificate-errors" not in cmd
 
 
 def test_embedded_compressed_messages():

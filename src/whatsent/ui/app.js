@@ -53,6 +53,7 @@
         unfinished: '“没看到”的几项不能当作干净。重测时粘贴提示词，等 Agent 说改好了再退出。',
       },
       expected: '应该发出，但没看到', unconfirmed: '没看到，未确认', retest: '重测',
+      headWarnings: '这次检测覆盖不完整', subWarnings: '请先查看下方警告，未发现标记不代表没有外发',
       headGood: (N) => `${N} 个假标记都没离开这台电脑`, subGood: '在 whatsent 能检查的所有流量里',
       diskExtra: (k) => `，另有 ${k} 个被复制到本地文件`,
       notSeenLong: '没有发现外发', diskOnly: '没发出，但被复制到本地文件', sentTo: (h) => `→ ${h}`,
@@ -117,6 +118,7 @@
         unfinished: 'The "not seen" rows are not a clean result. Run again: paste the prompt and exit only after the agent says it is done.',
       },
       expected: 'expected to leave, not seen', unconfirmed: 'not seen, unconfirmed', retest: 'Run again',
+      headWarnings: 'Run has incomplete coverage', subWarnings: 'Review the warnings before interpreting missing markers',
       headGood: (N) => `0 of ${N} markers left this computer`, subGood: 'in all the traffic whatsent could inspect',
       diskExtra: (k) => `; ${k} more copied into local files`,
       notSeenLong: 'not seen leaving', diskOnly: 'not sent, but copied into local files', sentTo: (h) => `→ ${h}`,
@@ -793,6 +795,7 @@
     const ctl = controlStatus(r);
     if (tt.leaked_sensitive) return ['bad', t.headline(tt.leaked, tt.canaries), t.subSecret(tt.leaked_sensitive) + extra];
     if (ctl !== 'ok') return ['unknown', t.ctlHead[ctl], t.ctlSub[ctl] + gapX];
+    if (r.warnings.length) return ['unknown', t.headWarnings, t.subWarnings];
     if (tt.leaked) return ['warn', t.headline(tt.leaked, tt.canaries), t.subFiles + extra + gapX];
     if (tt.not_inspected) return ['warn', t.headGap(tt.canaries), t.subGap(tt.not_inspected, r.gap_names || '') + extra];
     return ['good', t.headGood(tt.canaries), t.subGood + extra];
@@ -803,7 +806,7 @@
       if (c.id === 'task_file' && ctl !== 'ok' && !c.sent_to.length) return { cls: 'file', mark: '?', label: canaryLabel(c), where: t.expected };
       if (c.sent_to.length) return { cls: c.sensitive ? 'secret' : 'file', mark: c.sensitive ? '✕' : '→', label: canaryLabel(c), where: t.sentTo(c.sent_to.join(', ')) };
       if (c.on_disk) return { cls: c.sensitive ? 'secret' : 'file', mark: '!', label: canaryLabel(c), where: t.diskOnly };
-      if (ctl !== 'ok') return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
+      if (ctl !== 'ok' || r.warnings.length || r.totals.not_inspected) return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
       return { cls: 'ok', mark: '✓', label: canaryLabel(c), where: t.notSeenLong };
     });
   }
@@ -817,6 +820,9 @@
     const toastBox = h('div');
     const notices = [];
     if (r.warnings.some((w) => w.includes('exited after'))) notices.push(h('div', { class: 'notice' }, h('span', {}, t.quickExit(reportName(r)))));
+    for (const warning of r.warnings.filter((w) => !w.includes('exited after'))) {
+      notices.push(h('div', { class: 'notice' }, h('span', {}, warning)));
+    }
     if (controlStatus(r) !== 'ok') {
       const retry = S.lastStart && !(S.job && S.job.demo) ? btn(t.retest, null, () => startJob(S.lastStart), 'soft') : null;
       notices.push(h('div', { class: 'notice' }, h('span', {}, t.ctlHelp[controlStatus(r)]), retry));

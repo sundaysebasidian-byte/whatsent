@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import sys
 from pathlib import Path
@@ -46,11 +47,13 @@ def test_demo_end_to_end(tmp_path):
 
 
 @pytest.mark.parametrize("silent", [False, True])
-def test_task_file_is_the_positive_control(tmp_path, silent):
+def test_task_file_is_the_positive_control(tmp_path, silent, request):
     """A zstd-compressed upload through the real proxy is decoded; an agent that does the task
     without the task file ever being seen gets an unconfirmed result, not a clean one."""
     tls = demo.self_signed(tmp_path)
-    port = demo._serve(tls)
+    resources = ExitStack()
+    request.addfinalizer(resources.close)
+    port = demo._serve(tls, resources=resources)
     host = HOSTS["api"]
     command = [sys.executable, str(Path(__file__).with_name("codex_like_agent.py")),
                "--api", f"https://{host}/backend-api/codex/responses"] + (["--silent"] if silent else [])

@@ -9,7 +9,8 @@ from pathlib import Path
 
 args = sys.argv[1:]
 proxy = next(a.split("=", 1)[1] for a in args if a.startswith("--proxy-server="))
-assert "--ignore-certificate-errors" in args
+assert any(a.startswith("--ignore-certificate-errors-spki-list=") for a in args)
+assert "--ignore-certificate-errors" not in args
 workspace = Path(args[-1])
 body = json.dumps({"file": (workspace / "src/app.py").read_text()}).encode()
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))

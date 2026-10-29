@@ -71,7 +71,9 @@ whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspa
 
 Agent 每次表现并不相同，一次运行的结果可能有误导。`--runs 3` 会把 Agent 各在全新的金丝雀项目里跑三遍，合并成一份结果：只要有一遍发出了某个金丝雀就算发出，测评榜上会标出几遍里出现了几遍（比如 `2/3`），上传量取每遍的平均。
 
-没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。已有的文件不会被覆盖：再跑一批会存成 `-2`、`-3`，榜单会把它们合并。
+没传 `--agent-version` 时，版本号会向 Agent 自己查询（`--version`）。`--timeout` 用来停掉卡住的 Agent，`--result-to results/` 会把本次的 `result.json` 存成 `results/<agent>-<版本>[-clean].json`。运行目录以原子方式创建，同秒启动会添加数字后缀。已有的导出文件不会被覆盖，并发导出也一样：再跑一批会存成 `-2`、`-3`，榜单会把它们合并。
+
+多次运行会保存在同一个 `<时间戳>-xN/` 文件夹里，合并的 `result.json` 与每次运行的子目录并列；榜单只读取合并结果，不会重复计入子目录或工作区文件。对于 0.3.1 之前生成的输出，请明确传入合并结果，或使用 `--result-to` 目录，避免重复统计。
 
 如果设置了 `HTTPS_PROXY`（公司或 VPN 代理），whatsent 会转发到它，因为 Agent 本来就只能通过它上网。用 `--upstream URL` 指定别的代理，`--upstream none` 表示直连。只支持 HTTP(S) 代理，SOCKS 代理会以警告提示。
 
@@ -83,7 +85,7 @@ whatsent run --app "/Applications/Some IDE.app"
 whatsent run --app "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe"   # Windows：传 .exe 路径
 ```
 
-先把这个 App 完全退出：再次启动会被交给已经在运行的那个实例，whatsent 就看不到了。whatsent 会直接启动 App 自己的程序，打开金丝雀项目，并加上 Chromium 的 `--proxy-server`、`--ignore-certificate-errors`、`--disable-quic` 参数。忽略证书错误只在这次运行生效，而且 App 只会收到 whatsent 本地代理出示的证书；mitmproxy 自己仍会校验真实服务器的证书。在 AI 对话里输入建议的任务，等它做完，再退出 App（Cmd+Q；Windows 上用 文件 > 退出）。
+先把这个 App 完全退出：再次启动会被交给已经在运行的那个实例，whatsent 就看不到了。whatsent 会直接启动 App 自己的程序，打开金丝雀项目，并加上 Chromium 的 `--proxy-server`、`--ignore-certificate-errors-spki-list`、`--disable-quic` 参数。证书例外仅限本次 CA 的公钥，不会信任其他无效证书；mitmproxy 自己仍会校验真实服务器的证书。不支持该 Chromium 参数的 IDE 可能拒绝代理证书，这部分流量会标为未能检查。在 AI 对话里输入建议的任务，等它做完，再退出 App（Cmd+Q；Windows 上用 文件 > 退出）。
 
 ### 不走代理的流量（实验性）
 
@@ -134,6 +136,13 @@ whatsent run --app trae --capture local:Trae
 - 要测试的 Agent 已安装并登录。
 
 ## 已知局限
+
+信任边界、报告隐私和当前依赖安全公告见 [SECURITY.md](SECURITY.md)。
+
+- HTTP 请求读取完毕就记录外发数据，不必等待流式响应结束；记录到上传不代表远端已存储或处理。
+- 解码及归档展开采用 200 MiB 输出预算、两层嵌套、每包 4,096 个条目和每种格式 64 个嵌入压缩流的上限。达到网络解码上限或缺少解码能力时标为未能检查；旧 Brotli 库若不支持有界解码，也会明确标出。
+- 抓包中断、套接字访问被拒和磁盘扫描不完整都会显示警告；带警告的榜单结果不会判为干净。任务标记可见只能确认该标记被捕获，不能证明所有流量都已捕获。
+- 榜单生成前会校验全部输入，拒绝无效或空输入；只有 Agent 版本、clean 配置、系统及架构、捕获模式、whatsent 版本和金丝雀定义一致的结果才合并。
 
 - 不加 `--capture local` 时，只能解密遵守代理设置的流量。做了证书锁定或自带信任库的工具会列在"未能检查"里，不做内容分析。
 - IDE 支持依赖 Electron 遵守 `--proxy-server`、扩展进程遵守 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`。目前只用替身程序测过，还没用真实的 Cursor 或 Trae 测过。除了你直接传路径，内置的 App 名称不一定和你的安装一致。

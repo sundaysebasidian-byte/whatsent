@@ -18,6 +18,7 @@ class ConnectionSampler:
         self.proxy_port = proxy_port
         self.interval = interval
         self.seen: dict[tuple[str, int, str], dict] = {}
+        self.warnings: set[str] = set()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -38,12 +39,18 @@ class ConnectionSampler:
         try:
             root = psutil.Process(self.pid)
             procs = [root, *root.children(recursive=True)]
+        except psutil.AccessDenied:
+            self.warnings.add("agent process inspection was denied; bypass detection is incomplete")
+            return
         except psutil.Error:
             return
         for proc in procs:
             try:
                 conns = proc.net_connections(kind="inet")
                 name = proc.name()
+            except psutil.AccessDenied:
+                self.warnings.add("socket inspection was denied for an agent process; bypass detection is incomplete")
+                continue
             except psutil.Error:
                 continue
             for c in conns:

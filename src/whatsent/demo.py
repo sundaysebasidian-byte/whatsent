@@ -8,11 +8,12 @@ them to servers on 127.0.0.1 (see ``WHATSENT_REMAP`` in the addon).
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import datetime
 import http.server
 import ipaddress
 import json
-import socket
+import socketserver
 import ssl
 import sys
 import tempfile
@@ -66,28 +67,32 @@ def self_signed(tmp: Path) -> tuple[Path, Path]:
     return cert_path, key_path
 
 
-def _serve(tls: tuple[Path, Path] | None = None) -> int:
+def _serve(tls: tuple[Path, Path] | None = None, *, resources: ExitStack) -> int:
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Sink)
+    resources.callback(srv.server_close)
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(*tls)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    resources.callback(srv.shutdown)
     return srv.server_address[1]
 
 
-def _tcp_listener() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    s.listen()
+def _tcp_listener(resources: ExitStack) -> int:
+    stopped = threading.Event()
 
-    def accept():
-        while True:
-            conn, _ = s.accept()
-            threading.Timer(3, conn.close).start()
+    class Hold(socketserver.BaseRequestHandler):
+        def handle(self):
+            stopped.wait(3)
 
-    threading.Thread(target=accept, daemon=True).start()
-    return s.getsockname()[1]
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Hold)
+    srv.daemon_threads = True
+    resources.callback(srv.server_close)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    resources.callback(srv.shutdown)
+    resources.callback(stopped.set)
+    return srv.server_address[1]
 
 
 def setup(out: Path, pace: float = 0.0) -> tuple[argparse.Namespace, list[str]]:
@@ -95,7 +100,14 @@ def setup(out: Path, pace: float = 0.0) -> tuple[argparse.Namespace, list[str]]:
     ``pace`` spaces out the simulated agent's requests, so ``whatsent ui`` can show them arrive."""
     tmp = Path(tempfile.mkdtemp(prefix="whatsent-demo-"))
     tls = self_signed(tmp)
-    http_port, https_port, direct_port = _serve(), _serve(tls), _tcp_listener()
+    resources = ExitStack()
+    try:
+        http_port = _serve(resources=resources)
+        https_port = _serve(tls, resources=resources)
+        direct_port = _tcp_listener(resources)
+    except BaseException:
+        resources.close()
+        raise
     home = tmp / "home"
     cache = home / ".demo-agent" / "cache"
     cache.mkdir(parents=True)
@@ -117,6 +129,7 @@ def setup(out: Path, pace: float = 0.0) -> tuple[argparse.Namespace, list[str]]:
         # Our fake upstream servers use a self-signed certificate.
         mitm_set=["ssl_insecure=true"], name=AGENT_NAME, agent_version=None, upstream="none",
         proxy_env={"WHATSENT_REMAP": json.dumps(remap)}, home=home, sample=True,
+        demo_cleanup=resources.close,
     )
     return run_args, command
 

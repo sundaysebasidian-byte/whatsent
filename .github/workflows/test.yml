@@ -5,13 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.13"]
+        python: ["3.10", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,3 +33,20 @@ jobs:
           python-version: "3.13"
       - run: pip install .
       - run: whatsent check results examples/results
+      - run: whatsent board results -o site
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build
+      - run: python -m build
+      - run: pip install dist/*.whl
+      - name: Verify installed package outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          whatsent --version
+          python -c "from importlib.resources import files; p = files('whatsent'); assert all(p.joinpath(f).is_file() for f in ['_addon.py', 'ui/app.js', 'ui/app.css', 'ui/index.html', 'ui/icon.svg'])"
+          whatsent demo --out package-demo

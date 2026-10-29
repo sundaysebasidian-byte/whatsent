@@ -174,3 +174,62 @@ def test_terminal_command(monkeypatch, tmp_path):
     monkeypatch.setattr(ui.shutil, "which", lambda name: None)
     with pytest.raises(ui.UIError):
         ui.terminal_command(script, ["sh", str(script)])
+
+
+@pytest.mark.parametrize("value", ["invalid", "-1"])
+def test_invalid_event_cursor_returns_an_error(server, value):
+    assert request(server, "GET", f"/api/events?since={value}")[0] == 400
+
+
+@pytest.mark.parametrize("body", [[], {"tool": "demo", "pace": []}, {"tool": "demo", "pace": float("inf")},
+                                 {"tool": "demo", "pace": -1}])
+def test_invalid_api_bodies_do_not_launch_jobs(server, body):
+    assert request(server, "POST", "/api/start", body)[0] == 400
+    assert server.job is None
+
+
+def test_api_rejects_oversized_and_negative_lengths(server):
+    for length, expected in [(ui.MAX_BODY + 1, 413), (-1, 400)]:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.request("POST", "/api/start", headers={"Content-Length": str(length),
+                     "Content-Type": "application/json", "X-Whatsent-Token": server.token})
+        response = conn.getresponse()
+        assert response.status == expected
+        response.read()
+        conn.close()
+
+
+def test_unicode_token_is_rejected_without_crashing(server):
+    assert request(server, "GET", "/api/state?token=%E4%B8%AD", token=False)[0] == 403
+
+
+def test_report_route_accepts_collision_suffix(server):
+    run = server.out / "20261029-123456-2"
+    run.mkdir()
+    (run / "report.html").write_text("report")
+    assert request(server, "GET", f"/runs/{run.name}/report.html") == (200, b"report")
+
+
+def test_failed_job_always_disposes_of_its_ca(server, monkeypatch):
+    def fail(job):
+        job.session.prepare()
+        job.session.start_proxy()
+        raise RuntimeError("simulated failure after proxy startup")
+
+    monkeypatch.setattr(ui.Job, "_steps", fail)
+    job = server.start_job({"tool": "demo", "pace": 0})
+    job.thread.join(timeout=30)
+    assert not job.active and job.state == "failed"
+    assert job.session.proxy.proc.poll() is not None
+    assert not (job.session.proxy.confdir / "mitmproxy-ca.pem").exists()
+
+
+def test_stale_pid_reuse_cannot_terminate_an_unrelated_process(server, monkeypatch):
+    from types import SimpleNamespace
+
+    killed = []
+    proc = SimpleNamespace(create_time=lambda: 100, exe=lambda: "/fake/app", terminate=lambda: killed.append(True))
+    monkeypatch.setattr(ui.psutil, "Process", lambda pid: proc)
+    (server.out / ui.STALE_FILE).write_text(json.dumps({"pid": 123, "exe": "/fake/app", "created": 99}))
+    server.close_stale()
+    assert not killed
