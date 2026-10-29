@@ -24,6 +24,7 @@ jobs:
       - run: pip install -e ".[test]"
       - run: pytest -v
       - run: whatsent demo --out demo-report
+      - run: whatsent board demo-report -o demo-board
   results:
     runs-on: ubuntu-latest
     steps:
@@ -50,3 +51,4 @@ jobs:
           whatsent --version
           python -c "from importlib.resources import files; p = files('whatsent'); assert all(p.joinpath(f).is_file() for f in ['_addon.py', 'ui/app.js', 'ui/app.css', 'ui/index.html', 'ui/icon.svg'])"
           whatsent demo --out package-demo
+          whatsent board package-demo -o package-board

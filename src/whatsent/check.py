@@ -23,7 +23,7 @@ DEST = {"host", "requests", "bytes_out"}
 TOTALS = ("canaries", "leaked", "leaked_sensitive", "requests", "hosts", "bytes_out", "not_inspected",
           "copied_to_disk")
 CONTROLS = {"ok", "missed", "unconfirmed", "unfinished"}
-NAME = re.compile(r"[A-Za-z0-9 ._+-]{1,60}")
+NAME = re.compile(r"[A-Za-z0-9 ._+()-]{1,60}")
 VERSION = re.compile(r"[A-Za-z0-9 ._+()-]{1,40}")
 CAPTURE = re.compile(r"env|local(:[A-Za-z0-9 ._-]{1,40})?")
 HOST = re.compile(r"[A-Za-z0-9._:-]{1,253}")

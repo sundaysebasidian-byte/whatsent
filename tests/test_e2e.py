@@ -25,6 +25,11 @@ def test_demo_end_to_end(tmp_path):
     by_id = {c["id"]: c for c in s["canaries"]}
     assert s["agent"] == AGENT_NAME and s["sample"] is True
     assert json.loads((run_dir / "result.json").read_text(encoding="utf-8"))["sample"] is True
+    assert main(["check", str(run_dir / "result.json")]) == 0
+    board_out = tmp_path / "board"
+    assert main(["board", str(out), "-o", str(board_out)]) == 0
+    (row,) = json.loads((board_out / "leaderboard.json").read_text(encoding="utf-8"))["results"]
+    assert row["sample"] is True and row["agent"] == AGENT_NAME
 
     assert by_id["dotenv"]["sent_to"] == [HOSTS["telemetry"]]  # plain HTTP
     assert by_id["task_file"]["sent_to"] == [HOSTS["api"]]  # HTTPS + gzip, decrypted via our CA
