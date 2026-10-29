@@ -245,3 +245,55 @@ def test_collect_prefers_run_results_and_ignores_workspace_files(tmp_path):
     workspace.mkdir()
     (workspace / "credentials.json").write_text('{"password": "fake"}')
     assert board.collect([tmp_path, tmp_path / "result.json"]) == [result]
+
+
+@pytest.mark.parametrize("bad", [b'{"type":', b'\xff\xfe', b'[]', b'{}', b'{"type":"http","host":"x","bytes_out":-1}'])
+def test_damaged_journal_preserves_good_events_and_warns(tmp_path, bad):
+    event = {"type": "http", "host": "example.test", "bytes_out": 42, "ts": 1}
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(json.dumps(event).encode() + b"\n" + bad + b"\n")
+    warnings = []
+    assert report.load_events(path, warnings=warnings) == [event]
+    assert warnings and "incomplete" in warnings[0]
+
+
+def test_missing_journal_warns(tmp_path):
+    warnings = []
+    assert report.load_events(tmp_path / "missing.jsonl", warnings=warnings) == []
+    assert warnings
+
+
+def test_ca_cleanup_failure_is_visible(tmp_path, monkeypatch, capsys):
+    from whatsent.capture import Proxy
+
+    run = session(tmp_path)
+    run.proxy = Proxy(tmp_path, tmp_path / "canaries.json", tmp_path / "events.jsonl")
+    run.proxy.confdir.mkdir()
+    key = run.proxy.confdir / "mitmproxy-ca.pem"
+    key.write_text("synthetic test key")
+    unlink = Path.unlink
+
+    def denied(path, *args, **kwargs):
+        if path == key:
+            raise PermissionError("synthetic denial")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", denied)
+    run.close(final=True)
+    run.close(final=True)
+    assert key.exists() and len(run.warnings) == 1
+    assert "private key" in run.warnings[0]
+    assert "private key" in capsys.readouterr().err
+
+
+def test_damaged_journal_warning_reaches_the_export(tmp_path):
+    from whatsent.capture import Proxy
+
+    run = session(tmp_path)
+    run.prepare()
+    run.proxy = Proxy(run.run_dir, run.canaries_file, run.run_dir / "events.jsonl")
+    run.proxy.events_file.write_bytes(b'{"type":"http"')
+    summary, html = run.finish()
+    assert any("journal" in warning for warning in summary["warnings"])
+    assert "journal" in html.read_text()
+    assert json.loads(html.with_name("result.json").read_text())["warnings"] > 0

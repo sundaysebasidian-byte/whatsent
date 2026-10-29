@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = ["pytest>=7", "zstandard>=0.23"]
 
 [project.scripts]
 whatsent = "whatsent.cli:main"

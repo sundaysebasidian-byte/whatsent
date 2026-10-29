@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from urllib.parse import unquote_to_bytes
 
 MAX_EXPANDED = 200 * 1024 * 1024  # stop unpacking past this many bytes in total
+MAX_WINDOW = 128 * 1024 * 1024  # zstd history buffer, separate from the returned output limit
 MAX_MEMBERS = 4096  # archive entries, including empty files
 MAX_EMBEDDED = 64  # compressed streams to try per blob when they do not start at byte 0
 GZIP_MAGIC = b"\x1f\x8b\x08"
@@ -88,17 +89,44 @@ def _embedded(blob: bytes, budget: list[int], issues: list[str] | None) -> Itera
                 _issue(issues, "embedded stream limit reached")
                 break
             tries += 1
-            data = inflate(blob[pos:], budget[0])
+            data = inflate(blob[pos:], budget[0], issues=issues, allow_trailing=True)
             if data:
                 yield data
             pos = blob.find(magic, pos + 1)
 
 
-def _gunzip_prefix(blob: bytes, limit: int | None = None) -> bytes:
-    """Decode a bounded prefix without allocating the entire decompressed stream."""
+def _decode_frames(blob: bytes, factory, limit: int, magic: bytes | None, label: str,
+                   issues: list[str] | None, allow_trailing: bool = False) -> bytes:
+    """Both zlib and stdlib zstd expose bounded output, EOF and unused input."""
+    out = bytearray()
+    for _ in range(MAX_MEMBERS):
+        if len(out) >= limit:
+            _issue(issues, f"{label} expanded data limit reached")
+            break
+        decoder = factory()
+        out.extend(decoder.decompress(blob, max_length=limit - len(out)))
+        if not decoder.eof:
+            _issue(issues, f"{label} stream not fully decoded")
+            break
+        blob = decoder.unused_data
+        if not blob:
+            break
+        if magic is None or not blob.startswith(magic):
+            if not allow_trailing:
+                _issue(issues, f"{label} trailing data not decoded")
+            break
+    else:
+        _issue(issues, f"{label} compressed member limit reached")
+    return bytes(out)
+
+
+def _gunzip_prefix(blob: bytes, limit: int | None = None, *, issues: list[str] | None = None,
+                   allow_trailing: bool = False) -> bytes:
     try:
-        return zlib.decompressobj(wbits=31).decompress(blob, MAX_EXPANDED if limit is None else limit)
+        return _decode_frames(blob, lambda: zlib.decompressobj(31), MAX_EXPANDED if limit is None else limit,
+                              GZIP_MAGIC, "gzip", issues, allow_trailing)
     except zlib.error:
+        _issue(issues, "gzip stream could not be decoded")
         return b""
 
 
@@ -108,23 +136,17 @@ def decode_body(data: bytes, encoding: str, issues: list[str]) -> bytes:
     if not encoding or encoding == "identity":
         return data
     try:
-        if encoding in ("gzip", "deflate"):
-            decoder = zlib.decompressobj(31 if encoding == "gzip" else 15)
+        if encoding == "gzip":
+            decoded = _gunzip_prefix(data, issues=issues)
+            return data if not decoded and issues else decoded
+        if encoding == "deflate":
             try:
-                decoded = decoder.decompress(data, MAX_EXPANDED)
+                return _decode_frames(data, zlib.decompressobj, MAX_EXPANDED, None, encoding, issues)
             except zlib.error:
-                if encoding != "deflate":
-                    raise
-                decoder = zlib.decompressobj(-15)
-                decoded = decoder.decompress(data, MAX_EXPANDED)
-            if not decoder.eof or decoder.unused_data:
-                _issue(issues, f"{encoding} body not fully decoded")
-            return decoded
+                return _decode_frames(data, lambda: zlib.decompressobj(-15), MAX_EXPANDED, None, encoding, issues)
         if encoding == "zstd":
-            decoded = _unzstd_prefix(data)
-            if not decoded or len(decoded) >= MAX_EXPANDED:
-                _issue(issues, "zstd body not fully decoded")
-            return decoded
+            decoded = _unzstd_prefix(data, issues=issues)
+            return data if not decoded and issues else decoded
         if encoding == "br":
             import brotli  # installed with mitmproxy
 
@@ -157,28 +179,44 @@ def _zstd_module():
     return None
 
 
-def _unzstd_prefix(blob: bytes, limit: int | None = None) -> bytes:
+def _unzstd_prefix(blob: bytes, limit: int | None = None, *, issues: list[str] | None = None,
+                   allow_trailing: bool = False) -> bytes:
     mod = _zstd_module()
     if mod is None:
+        _issue(issues, "zstd decoder unavailable")
         return b""
     limit = MAX_EXPANDED if limit is None else limit
     try:
         if hasattr(mod.ZstdDecompressor, "stream_reader"):  # zstandard
-            with mod.ZstdDecompressor().stream_reader(io.BytesIO(blob)) as reader:
+            decoder = mod.ZstdDecompressor(max_window_size=MAX_WINDOW // 1024)
+            size = mod.frame_content_size(blob)
+            # The one-shot API checks EOF, but only bounds allocation when the
+            # declared frame size was checked first. The streaming API has no EOF flag.
+            # zstandard's one-shot decoder can accept truncated zero-size frames.
+            if 0 < size <= limit:
+                try:
+                    return decoder.decompress(blob, max_output_size=limit, allow_extra_data=allow_trailing)
+                except mod.ZstdError:
+                    pass  # keep a bounded readable prefix, with an explicit coverage warning
+            _issue(issues, "zstd stream completeness could not be verified")
+            with decoder.stream_reader(io.BytesIO(blob), read_across_frames=True) as reader:
                 return reader.read(limit)
-        return mod.ZstdDecompressor().decompress(blob, max_length=limit)  # stdlib/backport
+        options = {mod.DecompressionParameter.window_log_max: MAX_WINDOW.bit_length() - 1}
+        return _decode_frames(blob, lambda: mod.ZstdDecompressor(options=options), limit,
+                              ZSTD_MAGIC, "zstd", issues, allow_trailing)
     except (mod.ZstdError, EOFError):
+        _issue(issues, "zstd stream could not be decoded")
         return b""
 
 
 def _unpack(blob: bytes, budget: list[int], issues: list[str] | None) -> Iterator[bytes]:
     try:
         if blob[:2] == b"\x1f\x8b":
-            yield _gunzip_prefix(blob, budget[0])
+            yield _gunzip_prefix(blob, budget[0], issues=issues)
         elif blob[:4] == ZSTD_MAGIC:
-            yield _unzstd_prefix(blob, budget[0])
+            yield _unzstd_prefix(blob, budget[0], issues=issues)
         elif blob[:1] == b"\x78" and len(blob) > 2 and (blob[0] * 256 + blob[1]) % 31 == 0:
-            yield zlib.decompressobj().decompress(blob, budget[0])
+            yield _decode_frames(blob, zlib.decompressobj, budget[0], None, "zlib", issues)
         elif blob[:4] == b"PK\x03\x04":
             with zipfile.ZipFile(io.BytesIO(blob)) as zf:
                 for i, info in enumerate(zf.infolist()):
@@ -199,11 +237,13 @@ def _unpack(blob: bytes, budget: list[int], issues: list[str] | None) -> Iterato
                     if member.isfile():
                         with tf.extractfile(member) as f:
                             yield f.read(budget[0])
+        elif blob[:6] == b"7z\xbc\xaf\x27\x1c":
+            _issue(issues, "unsupported archive format: 7z")
+        else:
+            yield from _embedded(blob, budget, issues)
     except (OSError, EOFError, zlib.error, zipfile.BadZipFile, tarfile.TarError, ValueError,
             RuntimeError, NotImplementedError):
         _issue(issues, "archive could not be fully decoded")
-    if budget[0] > 0:
-        yield from _embedded(blob, budget, issues)
 
 
 def looks_like_archive(head: bytes) -> bool:

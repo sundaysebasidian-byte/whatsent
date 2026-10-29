@@ -2,7 +2,7 @@
 
 whatsent observes a test agent with synthetic canaries. It is neither a sandbox nor a firewall: the agent still has the current user's files, login and permissions. Run only tools you trust. The local UI and proxy bind to loopback, and the UI requires a per-process token for API access. Do not expose these ports publicly.
 
-Each run uses a private output directory on POSIX and a separate CA. IDE certificate exceptions are limited to that CA's public key. No system trust store is changed. Normal completion, cancellation and handled failures remove the CA private keys. A machine crash or SIGKILL cannot run cleanup; treat an interrupted output directory as private.
+Each run uses a private output directory on POSIX and a separate CA. IDE certificate exceptions are limited to that CA's public key. No system trust store is changed. Normal completion, cancellation and handled failures attempt to remove the CA private keys. Failed removal is reported in the terminal and, when generated, the report; keep that directory private. A machine crash or SIGKILL cannot run cleanup; treat an interrupted output directory as private.
 
 Only `result.json` is intended for public submission. Full reports and raw journals may contain destination paths, command arguments, local paths and diagnostic details. Inspect them before sharing. Home-prefix redaction does not make a full report anonymous. `whatsent check` checks structure and consistency; it cannot establish that submitted measurements are authentic or that arbitrary labels contain no private information.
 

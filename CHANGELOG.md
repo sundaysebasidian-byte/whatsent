@@ -4,6 +4,8 @@
 
 - Record HTTP uploads before responses finish and merge completion events without double-counting. Scan archive bodies separately from headers.
 - Bound decompression and archive reads; surface truncated or unsupported network decoding as uninspected.
+- Inspect concatenated gzip/zstd frames with shared output limits, bound zstd history memory, and report corrupt streams or unsupported archives. Flag backend-specific completeness gaps.
+- Preserve valid journal records and warn about missing, unreadable or damaged capture evidence. Report CA private-key cleanup failures instead of silently ignoring them.
 - Reserve run directories and exported batch files atomically to preserve concurrent runs.
 - Keep individual runs inside their batch and collect the aggregate once, excluding workspace JSON and duplicate input paths.
 - Enforce disk scan limits inside large directories; skip special files and symlinks and recheck at read time.

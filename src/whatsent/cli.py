@@ -451,7 +451,10 @@ class Session:
         if self.proxy:
             self.proxy.stop()
             if final:
-                self.proxy.forget_keys()
+                for warning in self.proxy.forget_keys():
+                    if warning not in self.warnings:
+                        self.warnings.append(warning)
+                        print(f"whatsent: {warning}", file=sys.stderr)
         if final and getattr(self.args, "demo_cleanup", None):
             self.args.demo_cleanup()
 
@@ -496,7 +499,8 @@ class Session:
             "warnings": self.warnings,
             "sample": getattr(args, "sample", False),  # True for the simulated demo agent
         }
-        summary = report.summarize(meta, self.canaries, report.load_events(self.proxy.events_file), disk,
+        events = report.load_events(self.proxy.events_file, warnings=self.warnings)
+        summary = report.summarize(meta, self.canaries, events, disk,
                                    self.direct, home=getattr(args, "home", None),
                                    task_fixed=canary.task_fixed(self.workspace))
         return summary, report.write(summary, self.run_dir)

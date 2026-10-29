@@ -119,14 +119,19 @@ class Proxy:
         if getattr(self, "log", None):
             self.log.close()
 
-    def forget_keys(self) -> None:
+    def forget_keys(self) -> list[str]:
         """Delete the run's CA private key. Only the certificate stays, so a shared report
         folder cannot be used to impersonate servers to anything that trusted this run's CA."""
+        warnings = []
         for name in ("mitmproxy-ca.pem", "mitmproxy-ca.p12", "mitmproxy-dhparam.pem"):
             try:
                 (self.confdir / name).unlink()
-            except OSError:
+            except FileNotFoundError:
                 pass
+            except OSError:
+                warnings.append(f"could not remove CA private key material {self.confdir / name}; "
+                                "keep this run directory private")
+        return warnings
 
     def local_capture_problem(self) -> str | None:
         """Best-effort check that OS-level capture actually started (it needs a macOS system

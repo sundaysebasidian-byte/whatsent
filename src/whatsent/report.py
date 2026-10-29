@@ -9,25 +9,49 @@ from html import escape
 from pathlib import Path
 
 
-def load_events(path: Path) -> list[dict]:
+def load_events(path: Path, *, warnings: list[str] | None = None) -> list[dict]:
     events = []
     requests = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+    damaged = 0
+    try:
+        with path.open("rb") as journal:
+            for line in journal:
+                if not line.strip():
+                    continue
                 try:
                     event = json.loads(line)
+                    if not _valid_event(event):
+                        damaged += 1
+                        continue
                     flow_id = event.get("flow_id") if event.get("type") == "http" else None
                     if flow_id and flow_id in requests:
                         prior = events[requests[flow_id]]
-                        events[requests[flow_id]] = {**event, "ts": prior["ts"]}
+                        events[requests[flow_id]] = {**event, "ts": prior.get("ts", event.get("ts"))}
                     else:
                         if flow_id:
                             requests[flow_id] = len(events)
                         events.append(event)
-                except json.JSONDecodeError:
-                    pass  # a partial last line if the proxy was killed mid-write
+                except (ValueError, UnicodeError, RecursionError):
+                    damaged += 1
+    except OSError:
+        if warnings is not None:
+            warnings.append("capture journal could not be fully read; network findings are incomplete")
+    if damaged and warnings is not None:
+        warnings.append(f"{damaged} damaged capture journal records were skipped; network findings are incomplete")
     return events
+
+
+def _valid_event(event: object) -> bool:
+    if not isinstance(event, dict) or event.get("type") not in ("http", "websocket", "tls_failed"):
+        return False
+    if not isinstance(event.get("host"), str) and not (event["type"] == "tls_failed" and event.get("host") is None):
+        return False
+    if "flow_id" in event and not isinstance(event["flow_id"], str):
+        return False
+    if any(type(event.get(k, 0)) is not int or event.get(k, 0) < 0 for k in ("bytes_out", "bytes_in")):
+        return False
+    canaries = event.get("canaries", [])
+    return isinstance(canaries, list) and all(isinstance(cid, str) for cid in canaries)
 
 
 def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict | None,
