@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +16,37 @@ pytest.importorskip("mitmproxy")
 from whatsent import demo  # noqa: E402
 from whatsent.cli import main, run  # noqa: E402
 from whatsent.demo import AGENT_NAME, HOSTS  # noqa: E402
+
+
+def test_capture_does_not_import_tornado_http_stack(tmp_path):
+    guard = tmp_path / "guard"
+    guard.mkdir()
+    attempted = tmp_path / "tornado-imported"
+    (guard / "sitecustomize.py").write_text('''
+import importlib.abc
+import os
+import sys
+from pathlib import Path
+with open(os.environ["TORNADO_GUARD_MARKER"], "a") as marker:
+    marker.write(str(os.getpid()) + "\\n")
+class Guard(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "tornado" or fullname.startswith("tornado."):
+            Path(os.environ["TORNADO_IMPORT_MARKER"]).write_text(fullname)
+            raise ImportError("Tornado is not part of the whatsent capture path")
+sys.meta_path.insert(0, Guard())
+''', encoding="utf-8")
+    activated = tmp_path / "guard-activated"
+    env = dict(os.environ, TORNADO_IMPORT_MARKER=str(attempted), TORNADO_GUARD_MARKER=str(activated))
+    env["PYTHONPATH"] = os.pathsep.join([str(guard), str(Path(__file__).parents[1] / "src"),
+                                       env.get("PYTHONPATH", "")])
+    result = subprocess.run([sys.executable, "-m", "whatsent", "demo", "--out", str(tmp_path / "out")],
+                            env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert len(set(activated.read_text().splitlines())) >= 3  # CLI, proxy and simulated agent
+    assert not attempted.exists(), "Tornado was imported by the CLI or a capture subprocess"
+    (output,) = (tmp_path / "out").glob("*/result.json")
+    assert json.loads(output.read_text())["totals"]["leaked"] == 3
 
 
 def test_demo_end_to_end(tmp_path):

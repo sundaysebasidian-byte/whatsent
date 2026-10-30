@@ -9,12 +9,52 @@ permissions:
   contents: read
 
 jobs:
+  dependencies:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Resolve runtime dependencies separately from audit tooling
+        run: |
+          python -m venv .audit-runtime
+          .audit-runtime/bin/python -m pip install .
+          .audit-runtime/bin/python -m pip check
+          .audit-runtime/bin/python -m pip freeze --exclude whatsent > runtime-requirements.txt
+          python -m pip install pip-audit==2.10.1
+      - name: Audit runtime dependencies without hiding known findings
+        run: |
+          status=0
+          pip-audit --disable-pip --no-deps -r runtime-requirements.txt --progress-spinner off -f json -o dependency-audit.json || status=$?
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          python scripts/check_dependency_audit.py dependency-audit.json | tee dependency-audit-summary.txt
+      - name: Show unresolved findings in the job summary
+        if: always()
+        run: |
+          if [ -f dependency-audit-summary.txt ]; then
+            cat dependency-audit-summary.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-python-${{ matrix.python }}
+          path: |
+            runtime-requirements.txt
+            dependency-audit.json
+            dependency-audit-summary.txt
+          if-no-files-found: error
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.13", "3.14"]
+        python: ["3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

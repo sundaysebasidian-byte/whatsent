@@ -14,7 +14,7 @@ whatsent run -- claude         # 命令行 Agent
 whatsent run --app cursor      # IDE 类 Agent
 ```
 
-Windows 上在 PowerShell 里运行（需要 [Python 3.10+](https://www.python.org/downloads/windows/) 和 [Git](https://git-scm.com/download/win)）：
+Windows 上在 PowerShell 里运行（需要 [Python 3.12+](https://www.python.org/downloads/windows/) 和 [Git](https://git-scm.com/download/win)）：
 
 ```powershell
 py -m pip install --user pipx; py -m pipx ensurepath   # 只需一次，之后重开一个终端
@@ -132,7 +132,7 @@ whatsent run --app trae --capture local:Trae
 
 ## 环境要求
 
-- macOS、Linux 或 Windows 10/11，Python 3.10 及以上（macOS 自带 Python 太旧，请用 Homebrew 的 Python、`pipx` 或 `uv tool install`）。
+- macOS、Linux 或 Windows 10/11，Python 3.12 及以上（macOS 自带 Python 太旧，请用 Homebrew 的 Python、`pipx` 或 `uv tool install`）。
 - 要测试的 Agent 已安装并登录。
 
 ## 已知局限
@@ -156,6 +156,8 @@ whatsent run --app trae --capture local:Trae
 - 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。
 - Agent 每次表现并不相同。同一个任务跑六次，`codex` 有一次发出了 git 历史、两次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每个 Agent 六次运行合并而成的，分两批、每批三次（`--runs 3`）；要拿结果做对比，请用 `--runs`。
 - 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，各跑六次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
+
+此候选版本要求 Python 3.12+ 和较新的代理依赖。升级时请用 Python 3.12+ 重建旧虚拟环境；Python 3.10/3.11 会解析到存在已知漏洞的旧依赖，现已停止支持。剩余 3 项上游 Tornado 告警及审计规则见 [SECURITY.md](SECURITY.md)。
 
 ## 开发
 

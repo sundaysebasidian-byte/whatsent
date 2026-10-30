@@ -14,7 +14,7 @@ whatsent run -- claude         # a CLI agent
 whatsent run --app cursor      # an IDE agent
 ```
 
-On Windows, in PowerShell (needs [Python 3.10+](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/download/win)):
+On Windows, in PowerShell (needs [Python 3.12+](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/download/win)):
 
 ```powershell
 py -m pip install --user pipx; py -m pipx ensurepath   # once, then open a new terminal
@@ -132,7 +132,7 @@ Results from [`results/`](results/) are what the board shows. While that folder 
 
 ## Requirements
 
-- macOS, Linux or Windows 10/11, Python 3.10+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
+- macOS, Linux or Windows 10/11, Python 3.12+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
 - The agent you want to test, already installed and logged in.
 
 ## Known limitations
@@ -154,6 +154,8 @@ See [SECURITY.md](SECURITY.md) for the trust boundary, report privacy and curren
 - A watched folder that takes more than 45 s to scan, or holds over a million files, is only partly scanned. The report then carries a warning and the disk findings for that folder may be incomplete.
 - Agents vary between runs. In six runs of the same task, `codex` sent the git history in one and the file listing in two, and `copilot` listed the files in one. The published results therefore combine six runs each, two batches of three (`--runs 3`); use `--runs` for anything you plan to compare.
 - Real agents tested so far: `claude`, `codex`, `codebuddy` and `copilot` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`, `codebuddy -p`, `copilot -p`) with `--clean`, six runs each. `copilot` ran with `--allow-tool=write` only, so it could edit files but not run shell commands. Interactive sessions, IDE agents, other agents, and real runs on Windows and Linux are still to come.
+
+This candidate requires Python 3.12+ and current proxy dependencies. Recreate older virtual environments when upgrading; Python 3.10/3.11 are no longer supported because they resolve vulnerable older dependencies. Three upstream Tornado advisories remain tracked in [SECURITY.md](SECURITY.md).
 
 ## Development
 

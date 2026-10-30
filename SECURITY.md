@@ -8,15 +8,27 @@ Only `result.json` is intended for public submission. Full reports and raw journ
 
 Missing canaries do not prove that data stayed local. Pinning, application encryption, unsupported encodings, sampling gaps and size/depth limits can hide uploads. A positive control proves visibility of that marker, not complete coverage. Warnings must be reviewed before drawing conclusions. These results describe the tested configuration only.
 
-## Dependency audit, 2026-10-29
+## Dependency audit, 2026-10-30
 
-The Python 3.13 audit resolved mitmproxy 12.3.1 and Tornado 6.5.10. Three Tornado advisories remain in that dependency set:
+Python 3.12+ and mitmproxy 12.3.1+ are now required. The old Python 3.10 resolver selected mitmproxy 11.0.2 and produced 64 advisory records across nine packages. Python 3.10/3.11 can no longer install this candidate. Recreate older environments with Python 3.12+ when upgrading. Explicit security floors also prevent an existing environment from retaining vulnerable transitive versions that mitmproxy's broad lower bounds would otherwise allow.
 
-- [GHSA-pcg2-g6cj-q92c](https://github.com/tornadoweb/tornado/security/advisories/GHSA-pcg2-g6cj-q92c): CPU exhaustion while parsing folded HTTP headers.
-- [GHSA-r4j5-9xpp-3985](https://github.com/tornadoweb/tornado/security/advisories/GHSA-r4j5-9xpp-3985): excessive CPU and memory when parsing many small HTTP chunks.
-- [GHSA-pw9p-v7r6-gx4p](https://github.com/tornadoweb/tornado/security/advisories/GHSA-pw9p-v7r6-gx4p): open redirects in vulnerable RedirectHandler templates.
+The current Python 3.13 runtime resolves mitmproxy 12.3.1 and Tornado 6.5.10. These three Tornado advisories remain **unresolved**:
 
-Tornado 6.6 fixes these, but mitmproxy 12.3.1 requires `tornado>=6.5.0,<=6.5.10`. Forcing 6.6 would violate its dependency contract. whatsent launches mitmdump, not mitmweb; its own UI uses Python's HTTP server. Inspection found no Tornado HTTP server/client or RedirectHandler in whatsent's runtime path. This reduces the observed exposure but does not make the dependency audit clean. Do not run mitmweb from this environment; re-audit when upstream supports patched Tornado. Other Python versions may resolve different dependencies.
+| Advisory | Affected path | Fixed version |
+| --- | --- | --- |
+| [GHSA-pcg2-g6cj-q92c](https://github.com/tornadoweb/tornado/security/advisories/GHSA-pcg2-g6cj-q92c) / CVE-2026-116577 | Folded HTTP header parsing can exhaust CPU in Tornado HTTP servers. | 6.6 |
+| [GHSA-r4j5-9xpp-3985](https://github.com/tornadoweb/tornado/security/advisories/GHSA-r4j5-9xpp-3985) / CVE-2026-115927 | Many small HTTP chunks block Tornado servers and SimpleAsyncHTTPClient and increase memory use. | 6.6 |
+| [GHSA-pw9p-v7r6-gx4p](https://github.com/tornadoweb/tornado/security/advisories/GHSA-pw9p-v7r6-gx4p) / CVE-2026-116578 | RedirectHandler templates permitting substitutions in the scheme or host can redirect externally. | 6.6 |
+
+The published mitmproxy 12.3.1 metadata and its current main branch require `tornado>=6.5.0,<=6.5.10`. Resolving it with `tornado>=6.6` fails. Tornado 6.6 also requires Python 3.11+. Downgrading mitmproxy to obtain a looser Tornado bound restores other known vulnerabilities. Do not force-install incompatible versions, edit installed package metadata, or treat removal of audit findings as a patch.
+
+whatsent starts mitmdump; its own UI uses Python's HTTP server. Source inspection found no use of Tornado's HTTP server/client or RedirectHandler in that capture path. A regression test blocks every Tornado import in the CLI, proxy and simulated-agent subprocesses while the real offline HTTP/HTTPS capture completes. This supports the exposure assessment for that tested path, not all possible modes or external uses of the environment. Do not run mitmweb from this environment. The three installed-package findings remain valid.
+
+### Continuous checks
+
+CI audits independently installed runtime dependencies on Python 3.12, 3.13 and 3.14, separate from the audit tool's own dependencies. The complete raw JSON, resolved versions and readable findings are retained as workflow artifacts. A successful CI policy check **does not mean zero vulnerabilities**.
+
+`scripts/check_dependency_audit.py` recognizes only the three advisory identities above on **Tornado 6.5.10**, with a review deadline of **2026-11-29 UTC**. It prints each as UNRESOLVED. New advisories, other affected versions/packages, skipped or missing audit results, and findings remaining after that deadline fail CI. There are no `--ignore-vuln` flags. Once mitmproxy supports patched Tornado, raise the floor to 6.6 or newer, rerun capture tests and dependency audits, and remove the obsolete exception. A patched, clean dependency set passes without using the exception.
 
 ## Reporting
 

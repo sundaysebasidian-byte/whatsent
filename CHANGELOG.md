@@ -2,6 +2,9 @@
 
 ## 0.3.1
 
+- Require Python 3.12+ and mitmproxy 12.3.1+; enforce security floors for transitive dependencies instead of retaining vulnerable legacy environments.
+- Audit runtime dependencies in CI with visible, narrowly scoped and expiring exceptions for three unresolved Tornado advisories; verify offline capture does not import Tornado.
+
 - Require a fresh recorder readiness signal after proxy listeners start; clean up failed startup and never mistake an unrelated occupied port for working capture.
 - Validate proxy URLs and listening ports before launch. Invalid environment proxies stop startup instead of selecting direct traffic; errors redact credentials.
 - Deduplicate runs and batches across mixed directory/file leaderboard arguments; reject unsafe counts and inconsistent date formats and validate aggregates before publication.
