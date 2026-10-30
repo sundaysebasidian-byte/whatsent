@@ -3,7 +3,7 @@
 ## 0.3.1
 
 - Require Python 3.12+ and mitmproxy 12.3.1+; enforce security floors for transitive dependencies instead of retaining vulnerable legacy environments.
-- Avoid an obsolete YAML C extension that fails to build when resolving minimum dependencies on Python 3.12.
+- Avoid obsolete YAML and ASN.1 dependencies that fail to build or import when resolving minimum dependencies on Python 3.12.
 - Audit runtime dependencies in CI with visible, narrowly scoped and expiring exceptions for three unresolved Tornado advisories; verify offline capture does not import Tornado.
 
 - Require a fresh recorder readiness signal after proxy listeners start; clean up failed startup and never mistake an unrelated occupied port for working capture.

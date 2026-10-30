@@ -26,7 +26,7 @@ whatsent starts mitmdump; its own UI uses Python's HTTP server. Source inspectio
 
 ### Continuous checks
 
-CI audits independently installed runtime dependencies on Python 3.12, 3.13 and 3.14, separate from the audit tool's own dependencies. The complete raw JSON, resolved versions and readable findings are retained as workflow artifacts. A successful CI policy check **does not mean zero vulnerabilities**.
+CI audits independently installed runtime dependencies on Python 3.12 (minimum versions), 3.13 and 3.14 (latest versions), separate from the audit tool's own dependencies. The minimum dependency set also runs the offline capture and leaderboard flow. The complete raw JSON, resolved versions and readable findings are retained as workflow artifacts. A successful CI policy check **does not mean zero vulnerabilities**.
 
 `scripts/check_dependency_audit.py` recognizes only the three advisory identities above on **Tornado 6.5.10**, with a review deadline of **2026-11-29 UTC**. It prints each as UNRESOLVED. New advisories, other affected versions/packages, skipped or missing audit results, and findings remaining after that deadline fail CI. There are no `--ignore-vuln` flags. Once mitmproxy supports patched Tornado, raise the floor to 6.6 or newer, rerun capture tests and dependency audits, and remove the obsolete exception. A patched, clean dependency set passes without using the exception.
 

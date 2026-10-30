@@ -13,7 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14"]
+        include:
+          - python: "3.12"
+            resolution: lowest
+          - python: "3.13"
+            resolution: highest
+          - python: "3.14"
+            resolution: highest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,11 +28,16 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Resolve runtime dependencies separately from audit tooling
         run: |
+          python -m pip install uv==0.11.28 pip-audit==2.10.1
           python -m venv .audit-runtime
-          .audit-runtime/bin/python -m pip install .
+          uv pip install --python .audit-runtime/bin/python --resolution ${{ matrix.resolution }} .
           .audit-runtime/bin/python -m pip check
           .audit-runtime/bin/python -m pip freeze --exclude whatsent > runtime-requirements.txt
-          python -m pip install pip-audit==2.10.1
+      - name: Exercise the minimum dependency set
+        if: matrix.resolution == 'lowest'
+        run: |
+          .audit-runtime/bin/whatsent demo --out minimum-demo
+          .audit-runtime/bin/whatsent board minimum-demo -o minimum-board
       - name: Audit runtime dependencies without hiding known findings
         run: |
           status=0
