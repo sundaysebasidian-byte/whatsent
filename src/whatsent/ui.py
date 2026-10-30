@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlsplit
 import psutil
 
 from whatsent import __version__, apps, canary, report
-from whatsent.cli import Session, _terminate, print_summary
+from whatsent.cli import Session, _terminate, print_summary, reserve_directory
 
 STATIC = Path(__file__).with_name("ui")
 IDLE_AFTER = 30.0  # seconds without a request before suggesting to reopen the app
@@ -109,11 +109,17 @@ class TerminalAgent:
     def __init__(self, pidfile: Path, exitfile: Path, timeout: float = 30):
         self.exitfile = exitfile
         deadline = time.monotonic() + timeout
-        while not pidfile.exists() or not pidfile.read_text(encoding="utf-8").strip():
+        while True:
+            try:
+                pid = int(pidfile.read_text(encoding="utf-8"))
+                if pid > 0:
+                    self.pid = pid
+                    break
+            except (FileNotFoundError, ValueError):
+                pass
             if time.monotonic() > deadline:
-                raise UIError("terminal", "the terminal window did not start")
+                raise UIError("terminal", "the terminal window did not publish a valid process ID")
             time.sleep(0.1)
-        self.pid = int(pidfile.read_text(encoding="utf-8"))
         try:
             self.proc = psutil.Process(self.pid)
         except psutil.Error:
@@ -162,16 +168,20 @@ def terminal_command(script: Path, child_args: list[str]) -> list[str]:
     raise UIError("no_terminal", "no terminal program found")
 
 
-def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, str]) -> TerminalAgent:
-    run_dir = cwd.parent
+def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, str],
+                     timeout: float = 30) -> TerminalAgent:
+    # A reopened terminal must never read a prior launch's PID, exit code or spec.
+    run_dir = reserve_directory(cwd.parent / "terminal")
     added = {k: v for k, v in env.items() if os.environ.get(k) != v}
     pkg_parent = str(Path(__file__).resolve().parent.parent)  # works from a source checkout too
     added["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, os.environ.get("PYTHONPATH")]))
     pidfile, exitfile = run_dir / "agent.pid", run_dir / "agent.exit"
+    cancel_file = run_dir / "cancelled"
     spec = run_dir / "agent.json"
     spec.write_text(json.dumps({"name": name, "command": command, "cwd": str(cwd), "env": added,
                                 "prompt": canary.TASK_PROMPT, "pidfile": str(pidfile),
-                                "exitfile": str(exitfile)}), encoding="utf-8")
+                                "exitfile": str(exitfile), "cancel_file": str(cancel_file),
+                                "launch_deadline": time.monotonic() + timeout}), encoding="utf-8")
     child_args = [sys.executable, "-m", "whatsent.child", str(spec)]
     child_env = {**os.environ, "PYTHONPATH": added["PYTHONPATH"]}
     if sys.platform == "win32":
@@ -184,7 +194,11 @@ def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, st
         script.chmod(0o755)
         subprocess.Popen(terminal_command(script, ["sh", str(script)]), env=child_env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    return TerminalAgent(pidfile, exitfile)
+    try:
+        return TerminalAgent(pidfile, exitfile, timeout=timeout)
+    except BaseException:
+        cancel_file.touch()
+        raise
 
 
 class Job:
@@ -340,7 +354,9 @@ class Job:
         for line in lines:
             try:
                 ev = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
+                continue
+            if not report.valid_event(ev):
                 continue
             flow_id = ev.get("flow_id") if ev.get("type") == "http" else None
             if flow_id:

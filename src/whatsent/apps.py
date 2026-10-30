@@ -57,7 +57,7 @@ def resolve(spec: str) -> ResolvedApp:
     """``spec`` is a known name (cursor, trae, ...), a .app bundle or an executable path."""
     path = Path(spec).expanduser()
     if path.suffix == ".app" and path.is_dir():
-        return ResolvedApp(path.stem, _bundle_executable(path))
+        return ResolvedApp(path.stem, _bundle_executable(path.resolve()))
     if path.is_file() and os.access(path, os.X_OK):
         return ResolvedApp(path.stem if sys.platform == "win32" else path.name, _real_binary(path))
     info = KNOWN.get(spec.lower())

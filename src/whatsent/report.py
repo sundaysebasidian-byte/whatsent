@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections import defaultdict
 from html import escape
@@ -20,7 +21,7 @@ def load_events(path: Path, *, warnings: list[str] | None = None) -> list[dict]:
                     continue
                 try:
                     event = json.loads(line)
-                    if not _valid_event(event):
+                    if not valid_event(event):
                         damaged += 1
                         continue
                     flow_id = event.get("flow_id") if event.get("type") == "http" else None
@@ -41,13 +42,23 @@ def load_events(path: Path, *, warnings: list[str] | None = None) -> list[dict]:
     return events
 
 
-def _valid_event(event: object) -> bool:
+def valid_event(event: object) -> bool:
+    """Common journal checks for the live stream and the final report."""
     if not isinstance(event, dict) or event.get("type") not in ("http", "websocket", "tls_failed"):
         return False
     if not isinstance(event.get("host"), str) and not (event["type"] == "tls_failed" and event.get("host") is None):
         return False
     if "flow_id" in event and not isinstance(event["flow_id"], str):
         return False
+    if "ts" in event:
+        timestamp = event["ts"]
+        if type(timestamp) not in (int, float):
+            return False
+        try:
+            if not math.isfinite(timestamp):
+                return False
+        except OverflowError:
+            return False
     if any(type(event.get(k, 0)) is not int or event.get(k, 0) < 0 for k in ("bytes_out", "bytes_in")):
         return False
     canaries = event.get("canaries", [])

@@ -2,6 +2,8 @@
 
 ## 0.3.1
 
+- Isolate terminal relaunch status and publish PID/exit files atomically; reject cancelled or expired terminal startup. Resolve relative macOS app bundles before changing the launch directory.
+- Apply the same journal validation to live UI updates and final reports, including malformed timestamps, so a bad record cannot stop live updates.
 - Record HTTP uploads before responses finish and merge completion events without double-counting. Scan archive bodies separately from headers.
 - Bound decompression and archive reads; surface truncated or unsupported network decoding as uninspected.
 - Inspect concatenated gzip/zstd frames with shared output limits, bound zstd history memory, and report corrupt streams or unsupported archives. Flag backend-specific completeness gaps.
