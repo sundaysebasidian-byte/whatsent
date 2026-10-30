@@ -2,6 +2,9 @@
 
 ## 0.3.1
 
+- Require a fresh recorder readiness signal after proxy listeners start; clean up failed startup and never mistake an unrelated occupied port for working capture.
+- Validate proxy URLs and listening ports before launch. Invalid environment proxies stop startup instead of selecting direct traffic; errors redact credentials.
+- Deduplicate runs and batches across mixed directory/file leaderboard arguments; reject unsafe counts and inconsistent date formats and validate aggregates before publication.
 - Isolate terminal relaunch status and publish PID/exit files atomically; reject cancelled or expired terminal startup. Resolve relative macOS app bundles before changing the launch directory.
 - Apply the same journal validation to live UI updates and final reports, including malformed timestamps, so a bad record cannot stop live updates.
 - Record HTTP uploads before responses finish and merge completion events without double-counting. Scan archive bodies separately from headers.

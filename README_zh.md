@@ -75,7 +75,7 @@ Agent 每次表现并不相同，一次运行的结果可能有误导。`--runs 
 
 多次运行会保存在同一个 `<时间戳>-xN/` 文件夹里，合并的 `result.json` 与每次运行的子目录并列；榜单只读取合并结果，不会重复计入子目录或工作区文件。对于 0.3.1 之前生成的输出，请明确传入合并结果，或使用 `--result-to` 目录，避免重复统计。
 
-如果设置了 `HTTPS_PROXY`（公司或 VPN 代理），whatsent 会转发到它，因为 Agent 本来就只能通过它上网。用 `--upstream URL` 指定别的代理，`--upstream none` 表示直连。只支持 HTTP(S) 代理，SOCKS 代理会以警告提示。
+如果设置了 `HTTPS_PROXY`（公司或 VPN 代理），whatsent 会转发到它，因为 Agent 本来就只能通过它上网。用 `--upstream URL` 指定别的代理，明确使用 `--upstream none` 才表示直连。只支持包含主机和可选端口的 HTTP(S) 地址；无效地址、URL 内凭据和 SOCKS 等不支持的代理会阻止启动，不会悄悄改成直连。错误信息不会打印 URL 中的凭据。
 
 ### IDE 类 Agent（Cursor、Trae、Windsurf 等）
 

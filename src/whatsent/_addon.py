@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 
 from whatsent.detect import Matcher, decode_body
 
@@ -23,6 +24,14 @@ class Recorder:
         self.out = open(os.environ["WHATSENT_EVENTS"], "a", buffering=1)
         self.lock = threading.Lock()
         self.remap = {h: tuple(a) for h, a in json.loads(os.environ.get("WHATSENT_REMAP", "{}")).items()}
+
+    def running(self) -> None:
+        # mitmproxy calls this after listener setup and startup-error checks.
+        from mitmproxy import ctx
+
+        ready_file = os.environ.get("WHATSENT_READY_FILE")
+        if ready_file and ctx.options.server:
+            Path(ready_file).write_text(os.environ["WHATSENT_READY_TOKEN"], encoding="utf-8")
 
     def server_connect(self, data) -> None:
         if self.remap and data.server.address and data.server.address[0] in self.remap:

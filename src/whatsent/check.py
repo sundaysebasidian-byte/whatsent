@@ -28,10 +28,11 @@ VERSION = re.compile(r"[A-Za-z0-9 ._+()-]{1,40}")
 CAPTURE = re.compile(r"env|local(:[A-Za-z0-9 ._-]{1,40})?")
 HOST = re.compile(r"[A-Za-z0-9._:-]{1,253}")
 TOKEN = re.compile(r"wsc\d[0-9a-f]{16}")
+MAX_COUNT = 2 ** 53 - 1  # JSON counts must also be exact in the browser's number type
 
 
 def _count(x) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool) and x >= 0
+    return type(x) is int and 0 <= x <= MAX_COUNT
 
 
 def _strings(obj):
@@ -83,6 +84,8 @@ def validate(r: object, name: str | None = None) -> list[str]:
     if r["kind"] not in ("cli", "app"):
         problems.append("kind is not cli or app")
     try:
+        if not isinstance(r["date"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", r["date"]):
+            raise ValueError
         date.fromisoformat(r["date"])
     except (TypeError, ValueError):
         problems.append("date is not YYYY-MM-DD")

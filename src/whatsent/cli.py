@@ -16,12 +16,11 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import psutil
 
 from whatsent import __version__, agents, apps, board, canary, diskwatch, report
-from whatsent.capture import Proxy, hide_credentials, upstream_from_env
+from whatsent.capture import Proxy, hide_credentials, normalize_upstream, upstream_from_env
 from whatsent.detect import Matcher
 from whatsent.netwatch import ConnectionSampler
 
@@ -86,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "port", None) is not None and not 0 <= args.port <= 65535:
+        print("whatsent: --port must be between 0 and 65535 (0 selects a free port)", file=sys.stderr)
+        return 2
     if args.cmd == "demo":
         from whatsent.demo import run_demo
         return run_demo(args)
@@ -111,10 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.clean and args.app:
         print("whatsent: --clean works for CLI agents (claude, codex, codebuddy, copilot), not for IDE apps", file=sys.stderr)
         return 2
-    if args.upstream and args.upstream.lower() != "none" and \
-            urlsplit(args.upstream if "://" in args.upstream else f"http://{args.upstream}").scheme not in ("http", "https"):
-        print("whatsent: --upstream is an http:// or https:// proxy, or none", file=sys.stderr)
-        return 2
+    if args.upstream is not None and args.upstream.strip().lower() != "none":
+        try:
+            args.upstream = normalize_upstream(args.upstream)
+        except ValueError as exc:
+            print(f"whatsent: --upstream is an http:// or https:// proxy, or none: {exc}", file=sys.stderr)
+            return 2
     if not args.app and not command:
         print("whatsent: give the agent command after --, e.g. whatsent run -- claude", file=sys.stderr)
         return 2
@@ -346,13 +350,14 @@ class Session:
     def resolve_upstream(self) -> str | None:
         """The proxy to forward to: --upstream, else the one the agent would have used without us."""
         choice = getattr(self.args, "upstream", None)
-        if choice and choice.lower() == "none":
+        if choice and choice.strip().lower() == "none":
             return None
-        if choice:
-            return choice if "://" in choice else f"http://{choice}"
+        if choice is not None:
+            return normalize_upstream(choice)
         url, problem = upstream_from_env(dict(os.environ))
         if problem:
-            self.warnings.append(problem)
+            raise RuntimeError(f"cannot use upstream proxy: {problem}; correct the proxy settings "
+                               "or explicitly use --upstream none for a direct CLI run")
         return url
 
     def start_proxy(self, capture: str | None = None) -> None:

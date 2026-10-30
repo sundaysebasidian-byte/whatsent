@@ -75,7 +75,7 @@ The agent version is asked from the agent (`--version`) unless you pass `--agent
 
 Multi-run batches keep their individual reports inside one `<timestamp>-xN/` folder, alongside the combined `result.json`. The board reads that aggregate once and ignores the nested workspace files. For output from versions before 0.3.1, pass the combined result explicitly or use the `--result-to` folder to avoid counting individual runs again.
 
-If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or `--upstream none` to connect directly. Only HTTP(S) proxies work; a SOCKS proxy is reported as a warning.
+If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or explicitly use `--upstream none` to connect directly. Only HTTP(S) host-and-port URLs work; invalid addresses, URL credentials and unsupported proxies such as SOCKS stop startup rather than silently switching to a direct connection. Proxy errors do not print URL credentials.
 
 ### IDE agents (Cursor, Trae, Windsurf, …)
 

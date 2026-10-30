@@ -117,21 +117,21 @@ def collect(paths: list[Path]) -> list[dict]:
         if not p.is_dir():
             files.append(p)
             continue
-        found = sorted(f for f in p.rglob("*.json") if f.name not in ("canaries.json", "leaderboard.json"))
-        has_result = {f.parent for f in found if f.name == "result.json"}
-        run_folders = has_result | {f.parent for f in found if f.name == "report.json"}
-        for f in found:
-            # Prefer a batch's aggregate over its nested runs, and a run's result
-            # over its full report. Workspace credentials and journals are not results.
-            enclosing = next((parent for parent in reversed(f.parents) if parent in run_folders), None)
-            if enclosing is None:
-                files.append(f)
-            elif f.parent == enclosing and f.name == ("result.json" if enclosing in has_result else "report.json"):
-                files.append(f)
+        files.extend(sorted(f for f in p.rglob("*.json") if f.name not in ("canaries.json", "leaderboard.json")))
     files = list(dict.fromkeys(f.resolve() for f in files))
+    has_result = {f.parent for f in files if f.name == "result.json"}
+    run_folders = has_result | {f.parent for f in files if f.name == "report.json"}
+    selected = []
+    for f in files:
+        # Apply precedence across all arguments, including explicit files mixed
+        # with directories. Each batch/run contributes its preferred result once.
+        enclosing = next((parent for parent in reversed(f.parents) if parent in run_folders), None)
+        if enclosing is None or (f.parent == enclosing and
+                f.name == ("result.json" if enclosing in has_result else "report.json")):
+            selected.append(f)
     out = []
     invalid = False
-    for f in files:
+    for f in selected:
         try:
             result = to_result(json.loads(f.read_text(encoding="utf-8")))
             problems = validate(result)
@@ -276,8 +276,13 @@ result.json holds only these aggregates: no paths, prompts or file contents.</p>
 
 
 def build(paths: list[Path], out: Path) -> int:
+    from whatsent.check import validate
+
     try:
         rows = sorted(latest_per_agent(collect(paths)), key=rank_key)
+        problems = [problem for row in rows for problem in validate(row)]
+        if problems:
+            raise ValueError("no leaderboard written: invalid aggregate: " + "; ".join(problems))
     except ValueError as exc:
         print(f"whatsent: {exc}", file=sys.stderr)
         return 1

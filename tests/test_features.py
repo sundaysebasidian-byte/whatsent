@@ -95,7 +95,8 @@ def test_session_picks_the_upstream(tmp_path, monkeypatch):
     assert _session(tmp_path, "--upstream", "10.0.0.1:3128").resolve_upstream() == "http://10.0.0.1:3128"
     monkeypatch.setenv("HTTPS_PROXY", "socks5://127.0.0.1:1080")
     session = _session(tmp_path)
-    assert session.resolve_upstream() is None and "socks5" in session.warnings[0]
+    with pytest.raises(RuntimeError, match="socks5"):
+        session.resolve_upstream()
 
 
 class _FakeUpstream(http.server.BaseHTTPRequestHandler):
