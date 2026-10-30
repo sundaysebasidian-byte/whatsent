@@ -62,6 +62,8 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 whatsent prints a suggested prompt before the agent starts. Use the same prompt for every agent you compare. The agent runs inside the canary project, with your normal login and settings.
 
+Relative executable paths (such as `./.venv/bin/agent`) are resolved from the directory where you start whatsent. Relative file paths in the agent's arguments refer to the canary project; use absolute paths if you intentionally need files elsewhere.
+
 Your own MCP servers, connectors and plugins send traffic of their own. Add `--clean` to turn them off for `claude`, `codex`, `codebuddy` and `copilot`, so the report is about the agent and not your setup; whatsent prints what it switched off. For other agents `--clean` says it has no switches and runs as usual.
 
 ```bash

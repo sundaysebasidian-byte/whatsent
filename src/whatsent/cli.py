@@ -85,6 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        return _main(args)
+    except OSError as exc:
+        print(f"whatsent: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(args: argparse.Namespace) -> int:
     if getattr(args, "port", None) is not None and not 0 <= args.port <= 65535:
         print("whatsent: --port must be between 0 and 65535 (0 selects a free port)", file=sys.stderr)
         return 2
@@ -305,6 +313,11 @@ class Session:
         self.args = args
         self.app = app
         self.name = args.name or (app.name if app else Path(command[0]).name)
+        if command and not app:
+            executable = shutil.which(command[0])
+            if executable:
+                # Keep virtualenv symlinks intact, but anchor lookup before changing cwd.
+                command = [os.path.abspath(executable), *command[1:]]
         self.started = datetime.now()
         self.run_dir = (args.out / self.started.strftime("%Y%m%d-%H%M%S")).resolve()
         self.workspace = self.run_dir / "workspace"

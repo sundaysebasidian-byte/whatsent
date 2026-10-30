@@ -62,6 +62,8 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 Agent 启动前 whatsent 会打印一句建议的任务提示。对比多个 Agent 时请用同一句提示。Agent 在金丝雀项目里运行，使用你平时的登录和设置。
 
+可执行文件的相对路径（如 `./.venv/bin/agent`）从启动 whatsent 时的目录解析。Agent 参数中的相对文件路径则指向金丝雀项目；如果确实需要其他位置的文件，请使用绝对路径。
+
 你自己装的 MCP 服务器、连接器和插件也会发出流量。加上 `--clean` 可以把它们关掉（支持 `claude`、`codex`、`codebuddy`、`copilot`），报告就只反映 Agent 本身而不是你的配置，关掉了什么 whatsent 会打印出来。其他 Agent 加 `--clean` 会提示没有可用开关，照常运行。
 
 ```bash

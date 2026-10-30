@@ -255,6 +255,8 @@ class Job:
         self.hub.emit("job", id=self.id, tool=self.tool, demo=self.demo, prompt=canary.TASK_PROMPT)
         self._step(0, "doing")
         s.prepare()
+        if self.cancelled.is_set():
+            return False
         self.hub.emit("canaries", items=[{k: c[k] for k in ("id", "file", "short", "sensitive")}
                                          for c in s.canaries])
         self._step(0, "done")
@@ -263,6 +265,8 @@ class Job:
             s.start_proxy("local" if self.deep else "env")
         except RuntimeError as exc:
             raise UIError("deep" if self.deep else "recorder", str(exc)) from exc
+        if self.cancelled.is_set():
+            return False
         self._step(1, "done")
         last = 2
         if self.app:
@@ -393,6 +397,8 @@ class Job:
         self.go.set()
 
     def quit_app(self) -> None:
+        if self.state != "needs_quit":
+            raise UIError("state", f"cannot close an existing app while {self.state}")
         for pid in apps.running(self.app) if self.app else []:
             try:
                 psutil.Process(pid).terminate()
@@ -653,7 +659,6 @@ class UI:
                 return self._json(200, result or {"ok": True})
 
             def _action(self, path: str, body: dict):
-                job = ui.job
                 if path == "/api/start":
                     return {"job": ui.start_job(body).id}
                 if path == "/api/pick":
@@ -662,17 +667,21 @@ class UI:
                     return ui.open_settings()
                 if path == "/api/stale/close":
                     return ui.close_stale()
-                if job is None:
-                    raise UIError("no_job", status=409)
-                if path == "/api/launch":
-                    return job.start(bool(body.get("deep")))
-                if path == "/api/quit-app":
-                    return job.quit_app()
-                if path == "/api/relaunch":
-                    return job.relaunch()
-                if path == "/api/stop":
-                    return job.stop()
-                raise UIError("not_found", status=404)
+                with ui.lock:
+                    job = ui.job
+                    if job is None:
+                        raise UIError("no_job", status=409)
+                    if body.get("job") != job.id:
+                        raise UIError("stale_job", "This test is no longer current. Reload the page.", 409)
+                    if path == "/api/launch":
+                        return job.start(bool(body.get("deep")))
+                    if path == "/api/quit-app":
+                        return job.quit_app()
+                    if path == "/api/relaunch":
+                        return job.relaunch()
+                    if path == "/api/stop":
+                        return job.stop()
+                    raise UIError("not_found", status=404)
 
         return Handler
 
