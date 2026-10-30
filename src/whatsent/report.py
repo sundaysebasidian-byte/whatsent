@@ -425,6 +425,10 @@ def render_html(s: dict) -> str:
     other_files = (f'<details><summary>{len(others)} other new large '
                    f'{"file" if len(others) == 1 else "files"}, probably from other programs</summary>'
                    f'{table(["File", "Size", "Finding"], new_file_rows(others), "", {1})}</details>') if others else ""
+    unreadable = d.get("unreadable_dirs", 0)
+    unreadable_note = (f' {unreadable} {"folder" if unreadable == 1 else "folders"} could not be read '
+                       "(permission denied) and "
+                       f'{"was" if unreadable == 1 else "were"} skipped.') if unreadable else ""
 
     tags = [s.get("agent_version"), "clean config" if s.get("clean") else None]
     version = f' <span>{e(" · ".join(t for t in tags if t))}</span>' if any(tags) else ""
@@ -464,7 +468,7 @@ def render_html(s: dict) -> str:
 {table(["Destination", "Why", "Times"], gap_rows, "Nothing. All traffic seen went through the proxy.", {2})}</section>
 
 <section><h2>Written to disk</h2>
-<p class="note">{d["changed_files"]} files changed under {len(d.get("roots", []))} watched folders.
+<p class="note">{d["changed_files"]} files changed under {len(d.get("roots", []))} watched folders.{unreadable_note}
 Encrypted uploads usually show up here as a new archive or large blob.</p>
 {table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}{other_files}</section>
 

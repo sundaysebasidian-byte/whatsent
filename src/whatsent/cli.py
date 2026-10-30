@@ -358,7 +358,9 @@ class Session:
             self.agent_version = (agents.app_version(self.app.executable) if self.app
                                   else agents.detect_version(self.command))
         self.since_ns = time.time_ns()
-        self.before, self.truncated = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+        self.unreadable_before: list[str] = []
+        self.before, self.truncated = diskwatch.snapshot(self.roots, exclude=[self.run_dir],
+                                                         unreadable=self.unreadable_before)
 
     def resolve_upstream(self) -> str | None:
         """The proxy to forward to: --upstream, else the one the agent would have used without us."""
@@ -486,11 +488,13 @@ class Session:
         if problem:
             self.warnings.append(problem)
 
-        after, truncated_after = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+        unreadable_after: list[str] = []
+        after, truncated_after = diskwatch.snapshot(self.roots, exclude=[self.run_dir], unreadable=unreadable_after)
         partial = sorted(set(self.truncated) | set(truncated_after))
         disk = diskwatch.diff(self.before, after, self.matcher, self.since_ns, partial, self.name)
         disk["roots"] = [str(r) for r in self.roots]
         disk["truncated_roots"] = partial
+        disk["unreadable_dirs"] = len(set(self.unreadable_before) | set(unreadable_after))
         if disk["incomplete_files"]:
             self.warnings.append(f"{len(disk['incomplete_files'])} changed files could not be fully inspected "
                                  "(read, size or decoding limits); disk findings are incomplete")

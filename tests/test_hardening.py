@@ -56,6 +56,56 @@ def test_snapshot_limits_one_large_directory(tmp_path):
     assert partial == [str(tmp_path)]
 
 
+def test_snapshot_reports_permission_denied_apart_from_partial_scans(tmp_path, monkeypatch):
+    (tmp_path / "ok").write_text("x")
+    denied = tmp_path / "protected"
+    denied.mkdir()
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    real = os.scandir
+
+    def scandir(path):
+        if str(path) == str(denied):
+            raise PermissionError(1, "Operation not permitted", str(path))
+        if str(path) == str(broken):
+            raise OSError(5, "Input/output error", str(path))
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    skipped = []
+    files, partial = diskwatch.snapshot([tmp_path], [], unreadable=skipped)
+    assert set(files) == {str(tmp_path / "ok")}
+    assert skipped == [str(denied)]
+    assert partial == [str(tmp_path)]  # the I/O error still makes the root partial
+    (tmp_path / "broken").rmdir()
+    _, partial = diskwatch.snapshot([tmp_path], [], unreadable=[])
+    assert partial == []
+    _, partial = diskwatch.snapshot([tmp_path], [])  # callers that do not ask keep the stricter reading
+    assert partial == [str(tmp_path)]
+
+
+def test_a_root_that_cannot_be_listed_is_partial(tmp_path, monkeypatch):
+    def scandir(path):
+        raise PermissionError(1, "Operation not permitted", str(path))
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    files, partial = diskwatch.snapshot([tmp_path], [], unreadable=[])
+    assert files == {} and partial == [str(tmp_path)]
+
+
+def test_decoding_gaps_in_browser_caches_do_not_make_disk_findings_incomplete(tmp_path):
+    token = "wsc0deadbeefcafef00d"
+    stray = b"0\r\xa7" + b"\x1f\x8b\x08\x00" + b"not a gzip stream" * 4
+    for folder in ("Cache_Data", "other"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "entry").write_bytes(stray)
+    (tmp_path / "Cache_Data" / "hit").write_bytes(stray + token.encode())
+    after, _ = diskwatch.snapshot([tmp_path], [])
+    disk = diskwatch.diff({}, after, detect.Matcher({"task_file": token}))
+    assert disk["incomplete_files"] == [str(tmp_path / "other" / "entry")]
+    assert [leak["path"] for leak in disk["leaks"]] == [str(tmp_path / "Cache_Data" / "hit")]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX special files")
 def test_snapshot_ignores_symlinks_and_named_pipes(tmp_path):
     ordinary = tmp_path / "ordinary"

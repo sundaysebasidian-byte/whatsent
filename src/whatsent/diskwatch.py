@@ -49,9 +49,14 @@ Snapshot = dict[str, tuple[int, int]]  # path -> (size, mtime_ns)
 
 
 def snapshot(roots: list[Path], exclude: list[Path], seconds: float = ROOT_SECONDS,
-             max_files: int = MAX_FILES_PER_ROOT) -> tuple[Snapshot, list[str]]:
+             max_files: int = MAX_FILES_PER_ROOT,
+             unreadable: list[str] | None = None) -> tuple[Snapshot, list[str]]:
     """Return file stats under ``roots`` and the roots that were only partly scanned
-    (they took longer than ``seconds`` or held more than ``max_files`` files)."""
+    (they took longer than ``seconds``, held more than ``max_files`` files, or could not be listed).
+
+    Folders and files below a root that the user may not read, such as macOS-protected ones, are
+    skipped and added to ``unreadable``; the tool cannot reach them either, so they do not make
+    the root partial."""
     excluded = {os.path.realpath(p) for p in exclude} | {os.path.abspath(p) for p in exclude}
     files: Snapshot = {}
     partial = []
@@ -71,8 +76,11 @@ def snapshot(roots: list[Path], exclude: list[Path], seconds: float = ROOT_SECON
             directory = stack.pop()
             try:
                 it = os.scandir(directory)
-            except OSError:
-                incomplete = True
+            except OSError as exc:
+                if isinstance(exc, PermissionError) and directory != root and unreadable is not None:
+                    unreadable.append(directory)
+                else:
+                    incomplete = True
                 continue
             with it:
                 for entry in it:
@@ -88,8 +96,11 @@ def snapshot(roots: list[Path], exclude: list[Path], seconds: float = ROOT_SECON
                         elif (entry.is_dir(follow_symlinks=False) and entry.name not in NOISY_NAMES
                               and not _skip(entry.path, root, real, excluded)):
                             stack.append(entry.path)
-                    except OSError:
-                        incomplete = True
+                    except OSError as exc:
+                        if isinstance(exc, PermissionError) and unreadable is not None:
+                            unreadable.append(entry.path)
+                        else:
+                            incomplete = True
                         continue
         if incomplete:
             partial.append(root)
@@ -135,7 +146,9 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
             continue
         issues = []
         hits = matcher.scan(data, issues=issues)
-        if len(data) < size or issues:
+        # Cached HTTP bodies hold stray gzip signatures and change while read; they are still
+        # scanned for canaries, but a decoding gap there does not make the disk findings incomplete.
+        if (len(data) < size or issues) and not _in_chromium_store(path):
             incomplete.append(path)
         entry = {"path": path, "size": size, "new": old is None}
         if hits:
@@ -152,8 +165,7 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
 def related(path: str, agent: str | None) -> bool:
     """Whether ``path`` mentions the agent by name (``Trae CN`` matches ``.trae-cn/``, and
     ``demo-agent (simulated)`` matches ``.demo-agent/``). Without a usable name every file counts."""
-    if any(part.lower() in CHROMIUM_STORES or part.lower().endswith(".indexeddb.blob")
-           for part in re.split(r"[\\/]", path)):
+    if _in_chromium_store(path):
         return False
     whole = _squash(agent or "")
     names = {w for w in re.findall(r"[a-z0-9]+", (agent or "").lower()) if len(w) >= 4}
@@ -161,6 +173,11 @@ def related(path: str, agent: str | None) -> bool:
         names.add(whole)
     squashed = _squash(path)
     return not names or any(n in squashed for n in names)
+
+
+def _in_chromium_store(path: str) -> bool:
+    return any(part.lower() in CHROMIUM_STORES or part.lower().endswith(".indexeddb.blob")
+               for part in re.split(r"[\\/]", path))
 
 
 def _squash(text: str) -> str:
