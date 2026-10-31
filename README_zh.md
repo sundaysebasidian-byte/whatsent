@@ -155,9 +155,9 @@ whatsent run --app trae --capture local:Trae
 - 连接采样每 0.2 秒一次，极短的直连可能漏掉。
 - 加密上传只能看到目的地和大小，看不到内容。落盘监控只有在工具把数据暂存在被监控目录时才有用。
 - 落盘监控会列出被监控目录里所有新出现的大文件，包括运行期间其他程序写的；路径里没出现 Agent 名称的文件会归到"可能来自其他程序"一栏。运行时间尽量短，其他应用尽量别动。
-- 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。
-- Agent 每次表现并不相同。同一个任务跑六次，`codex` 有一次发出了 git 历史、两次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每个 Agent 六次运行合并而成的，分两批、每批三次（`--runs 3`）；要拿结果做对比，请用 `--runs`。
-- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，各跑六次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
+- 某个被监控目录扫描超过 45 秒，或文件超过一百万个，就只会扫一部分。报告里会有警告，该目录的落盘结果可能不完整。用户本来就没有权限读取的子目录（比如 macOS 保护的目录）会被跳过，并在报告里计数，不会让整个目录算作只扫了一部分。
+- Agent 每次表现并不相同。同一个任务的六次 0.3.0 运行里，`codex` 有一次发出了 git 历史、两次发出了文件列表，`copilot` 有一次列出了文件。所以公布的结果都是每批三次（`--runs 3`）合并而成的；要拿结果做对比，请用 `--runs`。不同 whatsent 版本的结果分行显示，因为新版本可能抓到更多，所以同一个 Agent 版本可能出现两行：0.3.0 的行是六次运行，0.3.1 的行是三次。
+- 目前测过的真实 Agent：macOS（Apple 芯片）上的 `claude`、`codex`、`codebuddy` 和 `copilot`，用无头模式（`claude -p`、`codex exec`、`codebuddy -p`、`copilot -p`）加 `--clean` 运行，0.3.0 各跑六次，0.3.1 各跑三次。`copilot` 只开了 `--allow-tool=write`，能改文件但不能执行 shell 命令。交互式会话、IDE 类 Agent、其他 Agent，以及 Windows、Linux 上的真实运行还没测过。
 
 此候选版本要求 Python 3.12+ 和较新的代理依赖。升级时请用 Python 3.12+ 重建旧虚拟环境；Python 3.10/3.11 会解析到存在已知漏洞的旧依赖，现已停止支持。剩余 3 项上游 Tornado 告警及审计规则见 [SECURITY.md](SECURITY.md)。
 
