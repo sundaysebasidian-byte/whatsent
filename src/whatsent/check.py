@@ -23,15 +23,16 @@ DEST = {"host", "requests", "bytes_out"}
 TOTALS = ("canaries", "leaked", "leaked_sensitive", "requests", "hosts", "bytes_out", "not_inspected",
           "copied_to_disk")
 CONTROLS = {"ok", "missed", "unconfirmed", "unfinished"}
-NAME = re.compile(r"[A-Za-z0-9 ._+-]{1,60}")
+NAME = re.compile(r"[A-Za-z0-9 ._+()-]{1,60}")
 VERSION = re.compile(r"[A-Za-z0-9 ._+()-]{1,40}")
 CAPTURE = re.compile(r"env|local(:[A-Za-z0-9 ._-]{1,40})?")
 HOST = re.compile(r"[A-Za-z0-9._:-]{1,253}")
 TOKEN = re.compile(r"wsc\d[0-9a-f]{16}")
+MAX_COUNT = 2 ** 53 - 1  # JSON counts must also be exact in the browser's number type
 
 
 def _count(x) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool) and x >= 0
+    return type(x) is int and 0 <= x <= MAX_COUNT
 
 
 def _strings(obj):
@@ -50,7 +51,7 @@ def validate(r: object, name: str | None = None) -> list[str]:
     """What is wrong with this result, as short messages. Empty if it is fine. ``name`` is the file name."""
     if not isinstance(r, dict):
         return ["not a JSON object"]
-    if r.get("type") != "whatsent-result" or r.get("schema") != board.SCHEMA:
+    if r.get("type") != "whatsent-result" or type(r.get("schema")) is not int or r["schema"] != board.SCHEMA:
         return ["not a whatsent result (type whatsent-result, schema 1); a full report.json must not be submitted"]
     problems: list[str] = []
     extra = sorted(set(r) - TOP)
@@ -83,6 +84,8 @@ def validate(r: object, name: str | None = None) -> list[str]:
     if r["kind"] not in ("cli", "app"):
         problems.append("kind is not cli or app")
     try:
+        if not isinstance(r["date"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", r["date"]):
+            raise ValueError
         date.fromisoformat(r["date"])
     except (TypeError, ValueError):
         problems.append("date is not YYYY-MM-DD")
@@ -95,13 +98,15 @@ def validate(r: object, name: str | None = None) -> list[str]:
     if not _count(runs) or runs < 1:
         problems.append("runs is not a count of at least 1")
         runs = 1
-    if "control" in r and r["control"] not in CONTROLS:
+    if "control" in r and (not isinstance(r["control"], str) or r["control"] not in CONTROLS):
         problems.append("control is not ok, missed, unconfirmed or unfinished")
 
     canaries = r["canaries"]
     if not isinstance(canaries, dict) or not canaries:
         return problems + ["canaries is empty"]
     for cid, c in canaries.items():
+        if not isinstance(cid, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,59}", cid):
+            problems.append("canary id has an unexpected value")
         if not isinstance(c, dict) or {"short", "sensitive", "sent_to", "on_disk"} - set(c) or set(c) - CANARY:
             problems.append(f"canary {cid}: unexpected fields")
             return problems
@@ -116,6 +121,8 @@ def validate(r: object, name: str | None = None) -> list[str]:
             seen = c["seen_in"]
             if not _count(seen) or seen > runs or (seen > 0) != bool(hosts):
                 problems.append(f"canary {cid}: seen_in does not fit runs and sent_to")
+        elif runs > 1:
+            problems.append(f"canary {cid}: seen_in is required for multiple runs")
 
     dests = r["destinations"]
     if not isinstance(dests, list) or any(not isinstance(d, dict) or set(d) != DEST for d in dests):
@@ -123,6 +130,12 @@ def validate(r: object, name: str | None = None) -> list[str]:
     if any(not (isinstance(d["host"], str) and HOST.fullmatch(d["host"]) and _count(d["requests"])
                 and _count(d["bytes_out"])) for d in dests):
         return problems + ["destinations have unexpected values"]
+    destination_hosts = {d["host"] for d in dests}
+    if len(destination_hosts) != len(dests):
+        problems.append("destinations contain duplicate hosts")
+    for cid, c in canaries.items():
+        if not set(c["sent_to"]) <= destination_hosts:
+            problems.append(f"canary {cid}: sent_to contains a host missing from destinations")
 
     t = r["totals"]
     if not isinstance(t, dict) or set(t) != set(TOTALS) or not all(_count(t[k]) for k in TOTALS):
@@ -156,7 +169,7 @@ def check(paths: list[Path]) -> int:
     for f in files:
         try:
             problems = validate(json.loads(f.read_text(encoding="utf-8")), f.name)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             problems = [f"cannot read: {exc}"]
         for line in problems:
             print(f"{f}: {line}", file=sys.stderr)

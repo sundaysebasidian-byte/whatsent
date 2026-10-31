@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +18,37 @@ from whatsent.cli import main, run  # noqa: E402
 from whatsent.demo import AGENT_NAME, HOSTS  # noqa: E402
 
 
+def test_capture_does_not_import_tornado_http_stack(tmp_path):
+    guard = tmp_path / "guard"
+    guard.mkdir()
+    attempted = tmp_path / "tornado-imported"
+    (guard / "sitecustomize.py").write_text('''
+import importlib.abc
+import os
+import sys
+from pathlib import Path
+with open(os.environ["TORNADO_GUARD_MARKER"], "a") as marker:
+    marker.write(str(os.getpid()) + "\\n")
+class Guard(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "tornado" or fullname.startswith("tornado."):
+            Path(os.environ["TORNADO_IMPORT_MARKER"]).write_text(fullname)
+            raise ImportError("Tornado is not part of the whatsent capture path")
+sys.meta_path.insert(0, Guard())
+''', encoding="utf-8")
+    activated = tmp_path / "guard-activated"
+    env = dict(os.environ, TORNADO_IMPORT_MARKER=str(attempted), TORNADO_GUARD_MARKER=str(activated))
+    env["PYTHONPATH"] = os.pathsep.join([str(guard), str(Path(__file__).parents[1] / "src"),
+                                       env.get("PYTHONPATH", "")])
+    result = subprocess.run([sys.executable, "-m", "whatsent", "demo", "--out", str(tmp_path / "out")],
+                            env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert len(set(activated.read_text().splitlines())) >= 3  # CLI, proxy and simulated agent
+    assert not attempted.exists(), "Tornado was imported by the CLI or a capture subprocess"
+    (output,) = (tmp_path / "out").glob("*/result.json")
+    assert json.loads(output.read_text())["totals"]["leaked"] == 3
+
+
 def test_demo_end_to_end(tmp_path):
     out = tmp_path / "out"
     assert main(["demo", "--out", str(out)]) == 0
@@ -24,6 +58,11 @@ def test_demo_end_to_end(tmp_path):
     by_id = {c["id"]: c for c in s["canaries"]}
     assert s["agent"] == AGENT_NAME and s["sample"] is True
     assert json.loads((run_dir / "result.json").read_text(encoding="utf-8"))["sample"] is True
+    assert main(["check", str(run_dir / "result.json")]) == 0
+    board_out = tmp_path / "board"
+    assert main(["board", str(out), "-o", str(board_out)]) == 0
+    (row,) = json.loads((board_out / "leaderboard.json").read_text(encoding="utf-8"))["results"]
+    assert row["sample"] is True and row["agent"] == AGENT_NAME
 
     assert by_id["dotenv"]["sent_to"] == [HOSTS["telemetry"]]  # plain HTTP
     assert by_id["task_file"]["sent_to"] == [HOSTS["api"]]  # HTTPS + gzip, decrypted via our CA
@@ -46,11 +85,13 @@ def test_demo_end_to_end(tmp_path):
 
 
 @pytest.mark.parametrize("silent", [False, True])
-def test_task_file_is_the_positive_control(tmp_path, silent):
+def test_task_file_is_the_positive_control(tmp_path, silent, request):
     """A zstd-compressed upload through the real proxy is decoded; an agent that does the task
     without the task file ever being seen gets an unconfirmed result, not a clean one."""
     tls = demo.self_signed(tmp_path)
-    port = demo._serve(tls)
+    resources = ExitStack()
+    request.addfinalizer(resources.close)
+    port = demo._serve(tls, resources=resources)
     host = HOSTS["api"]
     command = [sys.executable, str(Path(__file__).with_name("codex_like_agent.py")),
                "--api", f"https://{host}/backend-api/codex/responses"] + (["--silent"] if silent else [])

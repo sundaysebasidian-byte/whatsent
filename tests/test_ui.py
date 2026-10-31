@@ -7,6 +7,7 @@ import http.client
 import json
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +96,53 @@ def test_unknown_app_is_not_found(server):
     assert status == 400 and json.loads(body)["error"] == "not_found"
 
 
+@pytest.mark.parametrize("action", ["stop", "launch", "relaunch", "quit-app"])
+@pytest.mark.parametrize("job_id", [None, "previous-test"])
+def test_stale_tab_cannot_control_the_current_job(server, action, job_id):
+    calls = []
+    server.job = SimpleNamespace(id="current-test", active=False, hub=ui.Hub(),
+                                stop=lambda: calls.append("stop"), start=lambda deep: calls.append("launch"),
+                                relaunch=lambda: calls.append("relaunch"), quit_app=lambda: calls.append("quit-app"))
+    status, body = request(server, "POST", f"/api/{action}", {"job": job_id})
+    assert status == 409 and json.loads(body)["error"] == "stale_job"
+    assert not calls
+
+
+def test_cancelling_preparation_does_not_start_a_proxy(server, monkeypatch):
+    args = ui.argparse.Namespace(out=server.out, port=None, watch=[], no_default_watch=True,
+                                mitm_set=[], name="fake", agent_version="test", capture="env")
+    job = ui.Job(server, {"id": "fake", "name": "fake", "kind": "cli"}, args, ["fake"], None)
+    def prepare():
+        job.session.canaries = []
+        job.stop()
+    def should_not_start(*args):
+        pytest.fail("a cancelled preparation must not start a proxy")
+    monkeypatch.setattr(job.session, "prepare", prepare)
+    monkeypatch.setattr(job.session, "start_proxy", should_not_start)
+    assert job._steps() is False
+
+
+@pytest.mark.parametrize("state", ["done", "failed", "running"])
+def test_quit_existing_app_is_only_allowed_during_preparation(server, monkeypatch, state):
+    args = ui.argparse.Namespace(out=server.out, port=None, watch=[], no_default_watch=True,
+                                mitm_set=[], name="fake", agent_version="test", capture="env")
+    job = ui.Job(server, {"id": "fake", "name": "fake", "kind": "app"}, args, [], SimpleNamespace())
+    job.state = state
+    monkeypatch.setattr(ui.apps, "running", lambda app: pytest.fail("must not inspect or close an unrelated app"))
+    with pytest.raises(ui.UIError, match="cannot close"):
+        job.quit_app()
+
+
+@pytest.mark.parametrize("action", ["stop", "launch", "relaunch", "quit-app"])
+def test_current_job_controls_still_work(server, action):
+    calls = []
+    server.job = SimpleNamespace(id="current-test", active=False, hub=ui.Hub(),
+                                stop=lambda: calls.append("stop"), start=lambda deep: calls.append("launch"),
+                                relaunch=lambda: calls.append("relaunch"), quit_app=lambda: calls.append("quit-app"))
+    assert request(server, "POST", f"/api/{action}", {"job": "current-test"})[0] == 200
+    assert calls == [action]
+
+
 def test_demo_run_streams_live_events_and_report(server):
     pytest.importorskip("mitmproxy")
     status, body = request(server, "POST", "/api/start", {"tool": "demo", "pace": 0.2})
@@ -132,7 +180,7 @@ def test_stop_ends_a_running_agent_and_still_writes_the_report(server):
     _, body = request(server, "POST", "/api/start", {"tool": "demo", "pace": 30})
     job = json.loads(body)["job"]
     events(server, job, "launched")
-    assert request(server, "POST", "/api/stop", {})[0] == 200
+    assert request(server, "POST", "/api/stop", {"job": job})[0] == 200
     got = events(server, job, "done")
     report = got[-1]["report"]
     assert report["totals"]["requests"] == 0
@@ -174,3 +222,62 @@ def test_terminal_command(monkeypatch, tmp_path):
     monkeypatch.setattr(ui.shutil, "which", lambda name: None)
     with pytest.raises(ui.UIError):
         ui.terminal_command(script, ["sh", str(script)])
+
+
+@pytest.mark.parametrize("value", ["invalid", "-1"])
+def test_invalid_event_cursor_returns_an_error(server, value):
+    assert request(server, "GET", f"/api/events?since={value}")[0] == 400
+
+
+@pytest.mark.parametrize("body", [[], {"tool": "demo", "pace": []}, {"tool": "demo", "pace": float("inf")},
+                                 {"tool": "demo", "pace": -1}])
+def test_invalid_api_bodies_do_not_launch_jobs(server, body):
+    assert request(server, "POST", "/api/start", body)[0] == 400
+    assert server.job is None
+
+
+def test_api_rejects_oversized_and_negative_lengths(server):
+    for length, expected in [(ui.MAX_BODY + 1, 413), (-1, 400)]:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.request("POST", "/api/start", headers={"Content-Length": str(length),
+                     "Content-Type": "application/json", "X-Whatsent-Token": server.token})
+        response = conn.getresponse()
+        assert response.status == expected
+        response.read()
+        conn.close()
+
+
+def test_unicode_token_is_rejected_without_crashing(server):
+    assert request(server, "GET", "/api/state?token=%E4%B8%AD", token=False)[0] == 403
+
+
+def test_report_route_accepts_collision_suffix(server):
+    run = server.out / "20261029-123456-2"
+    run.mkdir()
+    (run / "report.html").write_text("report")
+    assert request(server, "GET", f"/runs/{run.name}/report.html") == (200, b"report")
+
+
+def test_failed_job_always_disposes_of_its_ca(server, monkeypatch):
+    def fail(job):
+        job.session.prepare()
+        job.session.start_proxy()
+        raise RuntimeError("simulated failure after proxy startup")
+
+    monkeypatch.setattr(ui.Job, "_steps", fail)
+    job = server.start_job({"tool": "demo", "pace": 0})
+    job.thread.join(timeout=30)
+    assert not job.active and job.state == "failed"
+    assert job.session.proxy.proc.poll() is not None
+    assert not (job.session.proxy.confdir / "mitmproxy-ca.pem").exists()
+
+
+def test_stale_pid_reuse_cannot_terminate_an_unrelated_process(server, monkeypatch):
+    from types import SimpleNamespace
+
+    killed = []
+    proc = SimpleNamespace(create_time=lambda: 100, exe=lambda: "/fake/app", terminate=lambda: killed.append(True))
+    monkeypatch.setattr(ui.psutil, "Process", lambda pid: proc)
+    (server.out / ui.STALE_FILE).write_text(json.dumps({"pid": 123, "exe": "/fake/app", "created": 99}))
+    server.close_stale()
+    assert not killed

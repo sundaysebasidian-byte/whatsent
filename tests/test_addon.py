@@ -4,7 +4,9 @@ Responses API over WebSocket, or HTTP POST with a zstd-compressed body)."""
 from __future__ import annotations
 
 import importlib
+import io
 import json
+import zipfile
 
 import pytest
 
@@ -69,7 +71,8 @@ def test_unknown_encoding_is_flagged(recorder):
     rec, read = recorder
     rec.response(post(b"\x8b\x05\x80opaque", "x-custom"))
     rec.response(post(b"not really gzip", "gzip"))
-    assert [ev["undecoded"] for ev in read()] == ["x-custom", "gzip"]
+    assert "x-custom" in read()[0]["undecoded"]
+    assert "gzip" in read()[1]["undecoded"]
 
 
 def test_websocket_messages(recorder):
@@ -83,3 +86,40 @@ def test_websocket_messages(recorder):
         flow.websocket.messages.append(websocket.WebSocketMessage(opcode, from_client, content))
         rec.websocket_message(flow)
     assert [(ev["type"], ev["canaries"]) for ev in read()] == [("websocket", ["task_file"])] * 2
+
+
+def test_request_is_saved_before_a_streaming_response_finishes(recorder, tmp_path):
+    from whatsent.report import load_events
+
+    rec, read = recorder
+    flow = post(PROMPT.encode(), None)
+    response, flow.response = flow.response, None
+    rec.request(flow)
+    assert read()[0]["canaries"] == ["task_file"]
+    assert read()[0]["status"] is None
+    flow.response = response
+    rec.response(flow)
+    assert len(read()) == 2  # append-only journal, one logical upload
+    path = tmp_path / "journal.jsonl"
+    path.write_text("\n".join(map(json.dumps, read())))
+    (event,) = load_events(path)
+    assert event["status"] == 200 and event["canaries"] == ["task_file"]
+
+
+def test_archive_request_body_is_scanned_separately_from_headers(recorder):
+    rec, read = recorder
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("source.txt", PROMPT)
+    rec.request(post(packed.getvalue(), None))
+    assert read()[0]["canaries"] == ["task_file"]
+
+
+def test_archive_expansion_limit_is_reported_as_uninspected(recorder, monkeypatch):
+    import gzip
+    from whatsent import detect
+
+    rec, read = recorder
+    monkeypatch.setattr(detect, "MAX_EXPANDED", 128)
+    rec.request(post(gzip.compress(PROMPT.encode() * 20), None))
+    assert "limit" in read()[0]["undecoded"]

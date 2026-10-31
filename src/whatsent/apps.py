@@ -1,16 +1,16 @@
 """Launch desktop (Electron) IDE agents such as Cursor or Trae under whatsent.
 
 Electron apps ignore HTTPS_PROXY for most of their traffic, so we start the app's
-own binary with Chromium's proxy switches. ``--ignore-certificate-errors`` makes
-the app accept whatsent's certificate; this is safe for the run because the only
-TLS the app then talks to is whatsent's local proxy, and mitmproxy itself still
-verifies the real servers' certificates. Extension hosts are Node processes and
-get the usual proxy variables plus NODE_EXTRA_CA_CERTS.
+own binary with Chromium's proxy switches. Certificate exceptions are restricted
+to the public key of this run's CA; unrelated invalid certificates are not trusted.
+Extension hosts get the usual proxy variables plus NODE_EXTRA_CA_CERTS.
 """
 
 from __future__ import annotations
 
 import os
+import base64
+import hashlib
 import plistlib
 import shutil
 import sys
@@ -57,7 +57,7 @@ def resolve(spec: str) -> ResolvedApp:
     """``spec`` is a known name (cursor, trae, ...), a .app bundle or an executable path."""
     path = Path(spec).expanduser()
     if path.suffix == ".app" and path.is_dir():
-        return ResolvedApp(path.stem, _bundle_executable(path))
+        return ResolvedApp(path.stem, _bundle_executable(path.resolve()))
     if path.is_file() and os.access(path, os.X_OK):
         return ResolvedApp(path.stem if sys.platform == "win32" else path.name, _real_binary(path))
     info = KNOWN.get(spec.lower())
@@ -120,11 +120,17 @@ def running(app: ResolvedApp) -> list[int]:
     return pids
 
 
-def command(app: ResolvedApp, proxy_port: int, workspace: Path, extra: list[str]) -> list[str]:
+def command(app: ResolvedApp, proxy_port: int, workspace: Path, extra: list[str], ca_cert: Path) -> list[str]:
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    cert = x509.load_pem_x509_certificate(ca_cert.read_bytes())
+    spki = cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    trusted_key = base64.b64encode(hashlib.sha256(spki).digest()).decode("ascii")
     return [
         str(app.executable),
         f"--proxy-server=http://127.0.0.1:{proxy_port}",
-        "--ignore-certificate-errors",
+        f"--ignore-certificate-errors-spki-list={trusted_key}",
         "--disable-quic",  # QUIC/HTTP3 is UDP and would skip the proxy
         *extra,
         str(workspace),

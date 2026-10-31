@@ -53,6 +53,7 @@
         unfinished: '“没看到”的几项不能当作干净。重测时粘贴提示词，等 Agent 说改好了再退出。',
       },
       expected: '应该发出，但没看到', unconfirmed: '没看到，未确认', retest: '重测',
+      headWarnings: '这次检测覆盖不完整', subWarnings: '请先查看下方警告，未发现标记不代表没有外发',
       headGood: (N) => `${N} 个假标记都没离开这台电脑`, subGood: '在 whatsent 能检查的所有流量里',
       diskExtra: (k) => `，另有 ${k} 个被复制到本地文件`,
       notSeenLong: '没有发现外发', diskOnly: '没发出，但被复制到本地文件', sentTo: (h) => `→ ${h}`,
@@ -66,6 +67,7 @@
       staleSheet: '上次测试没正常结束，设置未改动', closeTest: '关闭测试窗口',
       errSheet: '出了点问题', ok: '知道了', noTerminal: '没找到可以打开的终端程序', busy: '已经有一个测试在运行',
       lost: '和 whatsent 的连接断开了', reload: '重新连接',
+      staleJob: '此页面对应的测试已结束或被替换，请重新连接查看当前测试',
       canaries: {
         task_file: '任务要改的文件', unrelated_source: '和任务无关的源文件', dotenv: '.env 里的密钥',
         credentials: '云服务凭据', file_name: '文件名本身', git_history: 'git 提交记录',
@@ -117,6 +119,7 @@
         unfinished: 'The "not seen" rows are not a clean result. Run again: paste the prompt and exit only after the agent says it is done.',
       },
       expected: 'expected to leave, not seen', unconfirmed: 'not seen, unconfirmed', retest: 'Run again',
+      headWarnings: 'Run has incomplete coverage', subWarnings: 'Review the warnings before interpreting missing markers',
       headGood: (N) => `0 of ${N} markers left this computer`, subGood: 'in all the traffic whatsent could inspect',
       diskExtra: (k) => `; ${k} more copied into local files`,
       notSeenLong: 'not seen leaving', diskOnly: 'not sent, but copied into local files', sentTo: (h) => `→ ${h}`,
@@ -130,6 +133,7 @@
       staleSheet: 'The last test did not end cleanly. Settings are unchanged.', closeTest: 'Close test window',
       errSheet: 'Something went wrong', ok: 'OK', noTerminal: 'No terminal app found', busy: 'A test is already running',
       lost: 'Lost the connection to whatsent', reload: 'Reconnect',
+      staleJob: 'This test has ended or been replaced. Reconnect to view the current test.',
       canaries: {
         task_file: 'File the task asks about', unrelated_source: 'Unrelated source file', dotenv: 'Secret in .env',
         credentials: 'Cloud credentials', file_name: 'File name only', git_history: 'Git commit message',
@@ -221,6 +225,9 @@
 
   // ---------- server ----------
   async function api(path, body) {
+    if (body !== undefined && ['/api/launch', '/api/quit-app', '/api/relaunch', '/api/stop'].includes(path)) {
+      body = { job: S.job && S.job.id, ...body };
+    }
     const opts = { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Whatsent-Token': TOKEN } };
     if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const r = await fetch(path, opts);
@@ -231,12 +238,23 @@
 
   let es = null;
   let lostTimer = null;
-  function connect(jobId) {
+  function disconnect() {
+    clearTimeout(lostTimer);
     if (es) es.close();
-    es = new EventSource(`/api/events?job=${encodeURIComponent(jobId)}&since=0&token=${encodeURIComponent(TOKEN)}`);
-    es.onmessage = (e) => onEvent(JSON.parse(e.data));
-    es.onopen = () => { clearTimeout(lostTimer); if (S.sheet && S.sheet.id === 'lost') closeSheet(); };
-    es.onerror = () => {
+    es = null;
+  }
+  function connect(jobId) {
+    disconnect();
+    const stream = new EventSource(`/api/events?job=${encodeURIComponent(jobId)}&since=0&token=${encodeURIComponent(TOKEN)}`);
+    es = stream;
+    stream.onmessage = (e) => { if (es === stream) onEvent(JSON.parse(e.data)); };
+    stream.onopen = () => {
+      if (es !== stream) return;
+      clearTimeout(lostTimer);
+      if (S.sheet && S.sheet.id === 'lost') closeSheet();
+    };
+    stream.onerror = () => {
+      if (es !== stream) return;
       clearTimeout(lostTimer);
       if (S.report || S.failed) return;
       lostTimer = setTimeout(() => {
@@ -271,26 +289,33 @@
         break;
       case 'deep_problem': deepSheet(); break;
       case 'finishing': S.finishing = true; break;
-      case 'done': S.report = ev.report; S.exported = null; return go('report');
-      case 'cancelled': return;
-      case 'error': S.failed = true; S.starting = false; errorSheet(ev.code, ev.message); break;
+      case 'done': disconnect(); S.report = ev.report; S.exported = null; return go('report');
+      case 'cancelled': disconnect(); resetRun(); S.job = null; return go('pick');
+      case 'error': disconnect(); S.failed = true; S.starting = false; errorSheet(ev.code, ev.message); break;
       default: return;
     }
     refresh();
   }
 
   async function startJob(body) {
+    disconnect();
     resetRun();
     S.lastStart = body;
     const demo = body.tool === 'demo';
     const t = (S.tools || []).find((x) => x.id === body.tool);
     S.job = { id: null, demo, tool: t || { id: body.tool || 'app', name: body.path ? basename(body.path) : body.tool, kind: demo ? 'cli' : 'app' } };
+    const pending = S.job;
     go(demo ? 'live' : 'prep');
     try {
       const r = await api('/api/start', { ...body, deep: S.deep });
-      S.job.id = r.job;
+      if (pending.cancelled || S.job !== pending) {
+        await api('/api/stop', { job: r.job });
+        return;
+      }
+      pending.id = r.job;
       connect(r.job);
     } catch (e) {
+      if (pending.cancelled || S.job !== pending) return;
       S.failed = true;
       if (e.code === 'not_found') {
         sheet({ ic: 'muted', mark: '?', text: T().notFoundSheet(e.message || toolName()), btn: T().choose,
@@ -303,9 +328,35 @@
   const startDemo = () => startJob({ tool: 'demo' });
   const basename = (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop().replace(/\.(app|exe)$/i, '');
 
+  function leavePreparation() {
+    if (S.job) {
+      S.job.cancelled = true;
+      if (S.job.id) api('/api/stop', {}).catch(showError);
+    }
+    disconnect();
+    go('pick');
+  }
+
+  async function finishJob() {
+    if (S.finishing || !S.job || !S.job.id) return;
+    S.finishing = true;
+    const job = S.job;
+    refresh();
+    try {
+      await api('/api/stop', {});
+    } catch (e) {
+      if (S.job !== job) return;
+      S.finishing = false;
+      showError(e);
+      refresh();
+    }
+  }
+
   function showError(e) { errorSheet(e.code, e.message); }
   function errorSheet(code, message) {
     const t = T();
+    if (code === 'stale_job') return sheet({ ic: 'warn', mark: '!', text: t.staleJob, btn: t.reload,
+      action: () => location.reload() });
     if (code === 'deep') {
       if (S.platform === 'darwin') return deepSheet();
       return sheet({ ic: 'info', mark: 'i', text: t.deepAdmin, detail: message, btn: t.deepOff,
@@ -535,9 +586,7 @@
       api('/api/launch', { deep: S.deep }).catch((e) => { S.starting = false; showError(e); refresh(); });
     }
     function back() {
-      if (S.job && S.job.id) api('/api/stop', {}).catch(() => {});
-      if (es) { es.close(); es = null; }
-      go('pick');
+      leavePreparation();
     }
     function update() {
       const defs = stepDefs();
@@ -617,10 +666,7 @@
     let lastAlert = '';
 
     function finish() {
-      if (S.finishing || !S.job || !S.job.id) return;
-      S.finishing = true;
-      api('/api/stop', {}).catch(showError);
-      refresh();
+      return finishJob();
     }
     function copyPrompt() {
       const text = S.prompt;
@@ -793,6 +839,7 @@
     const ctl = controlStatus(r);
     if (tt.leaked_sensitive) return ['bad', t.headline(tt.leaked, tt.canaries), t.subSecret(tt.leaked_sensitive) + extra];
     if (ctl !== 'ok') return ['unknown', t.ctlHead[ctl], t.ctlSub[ctl] + gapX];
+    if (r.warnings.length) return ['unknown', t.headWarnings, t.subWarnings];
     if (tt.leaked) return ['warn', t.headline(tt.leaked, tt.canaries), t.subFiles + extra + gapX];
     if (tt.not_inspected) return ['warn', t.headGap(tt.canaries), t.subGap(tt.not_inspected, r.gap_names || '') + extra];
     return ['good', t.headGood(tt.canaries), t.subGood + extra];
@@ -803,7 +850,7 @@
       if (c.id === 'task_file' && ctl !== 'ok' && !c.sent_to.length) return { cls: 'file', mark: '?', label: canaryLabel(c), where: t.expected };
       if (c.sent_to.length) return { cls: c.sensitive ? 'secret' : 'file', mark: c.sensitive ? '✕' : '→', label: canaryLabel(c), where: t.sentTo(c.sent_to.join(', ')) };
       if (c.on_disk) return { cls: c.sensitive ? 'secret' : 'file', mark: '!', label: canaryLabel(c), where: t.diskOnly };
-      if (ctl !== 'ok') return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
+      if (ctl !== 'ok' || r.warnings.length || r.totals.not_inspected) return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
       return { cls: 'ok', mark: '✓', label: canaryLabel(c), where: t.notSeenLong };
     });
   }
@@ -817,6 +864,9 @@
     const toastBox = h('div');
     const notices = [];
     if (r.warnings.some((w) => w.includes('exited after'))) notices.push(h('div', { class: 'notice' }, h('span', {}, t.quickExit(reportName(r)))));
+    for (const warning of r.warnings.filter((w) => !w.includes('exited after'))) {
+      notices.push(h('div', { class: 'notice' }, h('span', {}, warning)));
+    }
     if (controlStatus(r) !== 'ok') {
       const retry = S.lastStart && !(S.job && S.job.demo) ? btn(t.retest, null, () => startJob(S.lastStart), 'soft') : null;
       notices.push(h('div', { class: 'notice' }, h('span', {}, t.ctlHelp[controlStatus(r)]), retry));

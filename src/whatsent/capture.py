@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -23,6 +24,27 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def normalize_upstream(value: str) -> str:
+    """Use mitmproxy's own server grammar; errors must never echo proxy credentials."""
+    from mitmproxy.net.server_spec import parse
+
+    value = value.strip()
+    if any(c.isspace() or ord(c) < 32 for c in value):
+        raise ValueError("invalid whitespace in proxy address")
+    try:
+        parts = urlsplit(value if "://" in value else f"http://{value}")
+    except ValueError:
+        raise ValueError("invalid proxy address") from None
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"{parts.scheme} proxies are unsupported")
+    url = urlunsplit(parts)
+    try:
+        parse(url, "http")
+    except ValueError:
+        raise ValueError("invalid proxy host or port; paths and URL credentials are unsupported") from None
+    return url
+
+
 def upstream_from_env(env: dict[str, str]) -> tuple[str | None, str | None]:
     """The proxy the agent would have used without whatsent, as ``(url, problem)``.
 
@@ -33,11 +55,10 @@ def upstream_from_env(env: dict[str, str]) -> tuple[str | None, str | None]:
         value = env.get(var, "").strip()
         if not value:
             continue
-        url = value if "://" in value else f"http://{value}"
-        scheme = urlsplit(url).scheme.lower()
-        if scheme not in ("http", "https"):
-            return None, f"{var} points to a {scheme} proxy, which whatsent cannot forward to; traffic may not get out"
-        return url, None
+        try:
+            return normalize_upstream(value), None
+        except ValueError as exc:
+            return None, f"{var}: {exc}; traffic may not get out"
     return None, None
 
 
@@ -57,6 +78,7 @@ class Proxy:
         self.log_file = run_dir / "mitmproxy.log"
         self.canaries_file = canaries_file
         self.events_file = events_file
+        self.ready_file = run_dir / ".proxy-ready"
         self.port = port or free_port()
         self.mitm_options = mitm_options or []
         self.extra_env = extra_env or {}
@@ -75,6 +97,9 @@ class Proxy:
         env["WHATSENT_CANARIES"] = str(self.canaries_file)
         env["WHATSENT_EVENTS"] = str(self.events_file)
         env.update(self.extra_env)
+        token = secrets.token_hex(16)
+        env["WHATSENT_READY_FILE"] = str(self.ready_file)
+        env["WHATSENT_READY_TOKEN"] = token
         # Make the addon's `import whatsent` work even when run from a source checkout.
         pkg_parent = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, env.get("PYTHONPATH")]))
@@ -96,17 +121,24 @@ class Proxy:
             detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         else:
             detach = {"start_new_session": True}
-        self.proc = subprocess.Popen(cmd, env=env, stdout=self.log, stderr=subprocess.STDOUT,
-                                     stdin=subprocess.DEVNULL, **detach)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                raise RuntimeError(f"mitmproxy exited early, see {self.log_file}")
-            if self.ca_cert.exists() and _port_open(self.port):
-                return
-            time.sleep(0.1)
-        self.stop()
-        raise RuntimeError(f"mitmproxy did not start within {timeout}s, see {self.log_file}")
+        try:
+            self.proc = subprocess.Popen(cmd, env=env, stdout=self.log, stderr=subprocess.STDOUT,
+                                         stdin=subprocess.DEVNULL, **detach)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if self.proc.poll() is not None:
+                    raise RuntimeError(f"mitmproxy exited early, see {self.log_file}")
+                try:
+                    ready = self.ready_file.read_text(encoding="utf-8") == token
+                except (OSError, UnicodeError):
+                    ready = False
+                if ready and self.ca_cert.exists() and _port_open(self.port):
+                    return
+                time.sleep(0.1)
+            raise RuntimeError(f"mitmproxy did not start within {timeout}s, see {self.log_file}")
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -119,14 +151,19 @@ class Proxy:
         if getattr(self, "log", None):
             self.log.close()
 
-    def forget_keys(self) -> None:
+    def forget_keys(self) -> list[str]:
         """Delete the run's CA private key. Only the certificate stays, so a shared report
         folder cannot be used to impersonate servers to anything that trusted this run's CA."""
+        warnings = []
         for name in ("mitmproxy-ca.pem", "mitmproxy-ca.p12", "mitmproxy-dhparam.pem"):
             try:
                 (self.confdir / name).unlink()
-            except OSError:
+            except FileNotFoundError:
                 pass
+            except OSError:
+                warnings.append(f"could not remove CA private key material {self.confdir / name}; "
+                                "keep this run directory private")
+        return warnings
 
     def local_capture_problem(self) -> str | None:
         """Best-effort check that OS-level capture actually started (it needs a macOS system

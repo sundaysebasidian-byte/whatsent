@@ -11,8 +11,9 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 
-from whatsent.detect import Matcher, expand
+from whatsent.detect import Matcher, decode_body
 
 
 class Recorder:
@@ -23,6 +24,14 @@ class Recorder:
         self.out = open(os.environ["WHATSENT_EVENTS"], "a", buffering=1)
         self.lock = threading.Lock()
         self.remap = {h: tuple(a) for h, a in json.loads(os.environ.get("WHATSENT_REMAP", "{}")).items()}
+
+    def running(self) -> None:
+        # mitmproxy calls this after listener setup and startup-error checks.
+        from mitmproxy import ctx
+
+        ready_file = os.environ.get("WHATSENT_READY_FILE")
+        if ready_file and ctx.options.server:
+            Path(ready_file).write_text(os.environ["WHATSENT_READY_TOKEN"], encoding="utf-8")
 
     def server_connect(self, data) -> None:
         if self.remap and data.server.address and data.server.address[0] in self.remap:
@@ -41,21 +50,20 @@ class Recorder:
 
     def _http(self, flow, error: str | None = None) -> None:
         req = flow.request
-        undecoded = None
-        try:
-            body = req.get_content() or b""  # undoes Content-Encoding: gzip, br, zstd...
-        except ValueError:
-            # Unknown or broken encoding. The matcher still unpacks what it can from the raw
-            # bytes; if that finds nothing to unpack, the report lists the host as not inspected.
-            body = req.raw_content or b""
-            if len(expand(body, depth=1)) == 1:
-                undecoded = req.headers.get("content-encoding", "?")
+        issues = []
+        encoding = req.headers.get("content-encoding", "")
+        body = decode_body(req.raw_content or b"", encoding, issues)
+        if req.raw_content is None:
+            issues.append("request body unavailable (streamed)")
         head = f"{req.method} {req.url}\n".encode() + b"\n".join(
             k.encode() + b": " + v.encode() for k, v in req.headers.items(multi=True)
         )
         resp = flow.response
-        self._write({
+        hits = self.matcher.scan(head, issues=issues) | self.matcher.scan(body, issues=issues)
+        undecoded = "; ".join(issues) or None
+        record = {
             "type": "http",
+            "flow_id": flow.id,
             "host": req.pretty_host,
             "port": req.port,
             "scheme": req.scheme,
@@ -64,29 +72,51 @@ class Recorder:
             "status": resp.status_code if resp else None,
             "bytes_out": len(head) + len(req.raw_content or b""),
             "bytes_in": len(resp.raw_content or b"") if resp else 0,
-            "canaries": sorted(self.matcher.scan(head + b"\n" + body)),
+            "canaries": sorted(hits),
             "error": error,
             "undecoded": undecoded,
             "via": self._via(flow.client_conn),
-        })
+        }
+        flow.metadata["whatsent_request"] = record
+        self._write(record.copy())
 
-    def response(self, flow) -> None:
+    def request(self, flow) -> None:
+        # A model's streaming response can stay open until the agent is stopped.
+        # Persist the upload now; response/error only complete this same record.
         self._http(flow)
 
+    def _complete(self, flow, error: str | None = None) -> None:
+        record = flow.metadata.get("whatsent_request")
+        if record is None:
+            self._http(flow, error)
+            return
+        resp = flow.response
+        self._write({**record, "status": resp.status_code if resp else None,
+                     "bytes_in": len(resp.raw_content or b"") if resp else 0, "error": error})
+
+    def response(self, flow) -> None:
+        self._complete(flow)
+
     def error(self, flow) -> None:
-        self._http(flow, error=str(flow.error) if flow.error else "error")
+        self._complete(flow, error=str(flow.error) if flow.error else "error")
+
+    def done(self) -> None:
+        self.out.close()
 
     def websocket_message(self, flow) -> None:
         msg = flow.websocket.messages[-1]
         if not msg.from_client:
             return
+        issues = []
+        hits = self.matcher.scan(msg.content, issues=issues)
         self._write({
             "type": "websocket",
             "host": flow.request.pretty_host,
             "port": flow.request.port,
             "path": flow.request.path[:300],
             "bytes_out": len(msg.content),
-            "canaries": sorted(self.matcher.scan(msg.content)),
+            "canaries": sorted(hits),
+            "undecoded": "; ".join(issues) or None,
             "via": self._via(flow.client_conn),
         })
 

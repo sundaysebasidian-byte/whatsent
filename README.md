@@ -14,7 +14,7 @@ whatsent run -- claude         # a CLI agent
 whatsent run --app cursor      # an IDE agent
 ```
 
-On Windows, in PowerShell (needs [Python 3.10+](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/download/win)):
+On Windows, in PowerShell (needs [Python 3.12+](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/download/win)):
 
 ```powershell
 py -m pip install --user pipx; py -m pipx ensurepath   # once, then open a new terminal
@@ -62,6 +62,8 @@ whatsent run -- aider --yes-always --message "Fix the bug in src/app.py so that 
 
 whatsent prints a suggested prompt before the agent starts. Use the same prompt for every agent you compare. The agent runs inside the canary project, with your normal login and settings.
 
+Relative executable paths (such as `./.venv/bin/agent`) are resolved from the directory where you start whatsent. Relative file paths in the agent's arguments refer to the canary project; use absolute paths if you intentionally need files elsewhere.
+
 Your own MCP servers, connectors and plugins send traffic of their own. Add `--clean` to turn them off for `claude`, `codex`, `codebuddy` and `copilot`, so the report is about the agent and not your setup; whatsent prints what it switched off. For other agents `--clean` says it has no switches and runs as usual.
 
 ```bash
@@ -71,9 +73,11 @@ whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspa
 
 Agents vary from run to run, so a result from one run can mislead. `--runs 3` runs the agent three times, each in a fresh canary project, and writes one combined result: a canary counts as sent if any run sent it, the board shows in how many (for example `2/3`), and uploads are averaged per run.
 
-The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`. A file already there is never overwritten: a later batch of runs is saved as `-2`, `-3` and the board combines them.
+The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`. Run folders are reserved atomically (a same-second collision gets a numeric suffix). A file already there is never overwritten, including concurrent exports: a later batch of runs is saved as `-2`, `-3` and the board combines them.
 
-If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or `--upstream none` to connect directly. Only HTTP(S) proxies work; a SOCKS proxy is reported as a warning.
+Multi-run batches keep their individual reports inside one `<timestamp>-xN/` folder, alongside the combined `result.json`. The board reads that aggregate once and ignores the nested workspace files. For output from versions before 0.3.1, pass the combined result explicitly or use the `--result-to` folder to avoid counting individual runs again.
+
+If `HTTPS_PROXY` is set (a corporate or VPN proxy), whatsent forwards to it, because the agent could only reach the internet through it. Choose another with `--upstream URL`, or explicitly use `--upstream none` to connect directly. Only HTTP(S) host-and-port URLs work; invalid addresses, URL credentials and unsupported proxies such as SOCKS stop startup rather than silently switching to a direct connection. Proxy errors do not print URL credentials.
 
 ### IDE agents (Cursor, Trae, Windsurf, …)
 
@@ -83,7 +87,7 @@ whatsent run --app "/Applications/Some IDE.app"
 whatsent run --app "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe"   # Windows: path to the .exe
 ```
 
-Quit the app completely first: a second launch is handed to the running copy, which whatsent cannot see. whatsent starts the app's own binary with the canary project open and Chromium's `--proxy-server`, `--ignore-certificate-errors` and `--disable-quic` switches. The certificate switch only affects this run, and only whatsent's local proxy ever presents a certificate to the app; mitmproxy still verifies the real servers' certificates. Ask the AI chat the suggested prompt, wait for it to finish, then quit the app (Cmd+Q, or File > Exit on Windows).
+Quit the app completely first: a second launch is handed to the running copy, which whatsent cannot see. whatsent starts the app's own binary with the canary project open and Chromium's `--proxy-server`, `--ignore-certificate-errors-spki-list` and `--disable-quic` switches. The certificate exception is restricted to this run's CA public key; unrelated invalid certificates remain untrusted. mitmproxy still verifies the real servers' certificates. An IDE that does not support this Chromium switch may reject the proxy certificate; that is reported as uninspected traffic. Ask the AI chat the suggested prompt, wait for it to finish, then quit the app (Cmd+Q, or File > Exit on Windows).
 
 ### Traffic that ignores proxy settings (experimental)
 
@@ -124,27 +128,36 @@ By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.g
 
 ## Leaderboard
 
-`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. `whatsent check results/` rejects files that carry more than aggregates or whose numbers do not add up, and CI runs it on every pull request. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
+`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. `whatsent check results/` rejects files that carry more than aggregates or whose numbers do not add up, and CI runs it on every pull request. The board validates its inputs before writing anything and refuses invalid or empty input. Runs are combined only when the agent version, clean mode, operating system/architecture, capture mode, whatsent version and canary definitions match. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
 
 Results from [`results/`](results/) are what the board shows. While that folder is empty it shows made-up examples of fictional agents, labelled as examples ([examples/make_examples.py](examples/make_examples.py)).
 
 ## Requirements
 
-- macOS, Linux or Windows 10/11, Python 3.10+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
+- macOS, Linux or Windows 10/11, Python 3.12+ (the macOS system Python is too old; use Homebrew Python, `pipx` or `uv tool install`).
 - The agent you want to test, already installed and logged in.
 
 ## Known limitations
+
+See [SECURITY.md](SECURITY.md) for the trust boundary, report privacy and current dependency advisories.
 
 - Without `--capture local`, only traffic that honours proxy settings is decrypted. Tools that pin certificates or ship their own trust store are listed under "Not inspected", not analysed.
 - IDE support relies on Electron honouring `--proxy-server` and the extension host honouring `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`. It has been tested with a stand-in app, not yet with real Cursor or Trae. App names other than the path you pass may not match your install.
 - `--capture local` has not yet been tested on a real Mac or Windows PC; the Linux path needs root and eBPF.
 - Windows support is tested in CI (the demo and the stand-in IDE), not yet with real agents. The Windows install paths of the IDEs are best guesses; if `--app NAME` does not find yours, pass the `.exe` path.
+- HTTP uploads are journaled when the request is read, even if its response never finishes. A captured upload is not proof that the remote server stored or processed it.
+- Decoding and archive expansion have a 200 MiB output budget, two nested expansion levels, 4,096 entries per archive and 64 embedded streams of each type per blob. Network decoding limits or unavailable codecs are reported as uninspected; opaque application encryption remains unreadable. On older Brotli builds without bounded decoding, Brotli bodies are flagged as uninspected.
+- Gzip and zstd members are scanned beyond the first frame, within shared output limits; zstd history is capped at 128 MiB. Damaged streams and unsupported 7z archives are flagged. The older `zstandard` backend cannot verify completeness of bounded multi-frame, unknown-size or empty-frame reads, so these remain uninspected even when some markers are found.
+- Missing, unreadable or damaged capture journals produce a coverage warning while preserving valid records. CA-key removal failures are reported in the terminal and report; keep the affected run directory private.
+- Capture failures, inaccessible sockets and partial disk scans produce warnings; rows with warnings are never classified as clean. A task-file positive control confirms only that this marker was visible, not that all traffic was captured.
 - The socket sampler checks every 0.2 s, so very short direct connections can be missed.
 - Encrypted uploads can only be measured (destination and size), not read. The disk watch helps only if the tool stages the data in a watched folder.
 - Disk watch lists any new large file in watched folders, including ones other programs wrote during the run. Files whose path does not mention the agent are grouped as "probably from other programs". Keep runs short and other apps quiet.
 - A watched folder that takes more than 45 s to scan, or holds over a million files, is only partly scanned. The report then carries a warning and the disk findings for that folder may be incomplete.
 - Agents vary between runs. In six runs of the same task, `codex` sent the git history in one and the file listing in two, and `copilot` listed the files in one. The published results therefore combine six runs each, two batches of three (`--runs 3`); use `--runs` for anything you plan to compare.
 - Real agents tested so far: `claude`, `codex`, `codebuddy` and `copilot` on macOS (Apple silicon), run headless (`claude -p`, `codex exec`, `codebuddy -p`, `copilot -p`) with `--clean`, six runs each. `copilot` ran with `--allow-tool=write` only, so it could edit files but not run shell commands. Interactive sessions, IDE agents, other agents, and real runs on Windows and Linux are still to come.
+
+This candidate requires Python 3.12+ and current proxy dependencies. Recreate older virtual environments when upgrading; Python 3.10/3.11 are no longer supported because they resolve vulnerable older dependencies. Three upstream Tornado advisories remain tracked in [SECURITY.md](SECURITY.md).
 
 ## Development
 

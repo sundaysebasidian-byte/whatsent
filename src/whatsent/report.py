@@ -3,22 +3,66 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections import defaultdict
 from html import escape
 from pathlib import Path
 
 
-def load_events(path: Path) -> list[dict]:
+def load_events(path: Path, *, warnings: list[str] | None = None) -> list[dict]:
     events = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+    requests = {}
+    damaged = 0
+    try:
+        with path.open("rb") as journal:
+            for line in journal:
+                if not line.strip():
+                    continue
                 try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass  # a partial last line if the proxy was killed mid-write
+                    event = json.loads(line)
+                    if not valid_event(event):
+                        damaged += 1
+                        continue
+                    flow_id = event.get("flow_id") if event.get("type") == "http" else None
+                    if flow_id and flow_id in requests:
+                        prior = events[requests[flow_id]]
+                        events[requests[flow_id]] = {**event, "ts": prior.get("ts", event.get("ts"))}
+                    else:
+                        if flow_id:
+                            requests[flow_id] = len(events)
+                        events.append(event)
+                except (ValueError, UnicodeError, RecursionError):
+                    damaged += 1
+    except OSError:
+        if warnings is not None:
+            warnings.append("capture journal could not be fully read; network findings are incomplete")
+    if damaged and warnings is not None:
+        warnings.append(f"{damaged} damaged capture journal records were skipped; network findings are incomplete")
     return events
+
+
+def valid_event(event: object) -> bool:
+    """Common journal checks for the live stream and the final report."""
+    if not isinstance(event, dict) or event.get("type") not in ("http", "websocket", "tls_failed"):
+        return False
+    if not isinstance(event.get("host"), str) and not (event["type"] == "tls_failed" and event.get("host") is None):
+        return False
+    if "flow_id" in event and not isinstance(event["flow_id"], str):
+        return False
+    if "ts" in event:
+        timestamp = event["ts"]
+        if type(timestamp) not in (int, float):
+            return False
+        try:
+            if not math.isfinite(timestamp):
+                return False
+        except OverflowError:
+            return False
+    if any(type(event.get(k, 0)) is not int or event.get(k, 0) < 0 for k in ("bytes_out", "bytes_in")):
+        return False
+    canaries = event.get("canaries", [])
+    return isinstance(canaries, list) and all(isinstance(cid, str) for cid in canaries)
 
 
 def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict | None,
@@ -227,6 +271,8 @@ def _verdict(s: dict) -> tuple[str, str, str]:
     if ctl != "ok":
         return "unknown", CONTROL_HEAD[ctl], \
             f"{t['leaked']} of {t['canaries']} canaries seen leaving, but {CONTROL_SUB[ctl]}{gap_extra}"
+    if s.get("warnings"):
+        return "unknown", "Run has incomplete coverage", "Review the run warnings before interpreting missing canaries"
     if t["leaked"]:
         return "warn", f"{t['leaked']} of {t['canaries']} canaries left this machine", \
             f"only ordinary project files, no secrets{extra}{gap_extra}"
@@ -309,6 +355,7 @@ def render_html(s: dict) -> str:
 
     ctl = control_status(s)
     unconfirmed_task = ctl != "ok"
+    incomplete = unconfirmed_task or bool(s.get("warnings")) or bool(t["not_inspected"])
     checks = []
     for c in s["canaries"]:
         if c["id"] == "task_file" and unconfirmed_task and not c["sent_to"]:
@@ -319,7 +366,7 @@ def render_html(s: dict) -> str:
             where = "sent to " + ", ".join(c["sent_to"])
         elif c["on_disk"]:
             mark, cls, where = "!", "leak" if c["sensitive"] else "", "not sent, but copied into local files"
-        elif unconfirmed_task:
+        elif incomplete:
             mark, cls, where = "–", "", "not seen, unconfirmed"
         else:
             mark, cls, where = "✓", "", "not seen leaving"
@@ -332,7 +379,7 @@ def render_html(s: dict) -> str:
                              for h in c["sent_to"])
         elif c["id"] == "task_file" and unconfirmed_task:
             status = '<span class="chip warn">expected to leave, not seen</span>'
-        elif unconfirmed_task:
+        elif incomplete:
             status = '<span class="chip">not seen, unconfirmed</span>'
         else:
             status = '<span class="chip good">not seen leaving</span>'
@@ -378,6 +425,10 @@ def render_html(s: dict) -> str:
     other_files = (f'<details><summary>{len(others)} other new large '
                    f'{"file" if len(others) == 1 else "files"}, probably from other programs</summary>'
                    f'{table(["File", "Size", "Finding"], new_file_rows(others), "", {1})}</details>') if others else ""
+    unreadable = d.get("unreadable_dirs", 0)
+    unreadable_note = (f' {unreadable} {"folder" if unreadable == 1 else "folders"} could not be read '
+                       "(permission denied) and "
+                       f'{"was" if unreadable == 1 else "were"} skipped.') if unreadable else ""
 
     tags = [s.get("agent_version"), "clean config" if s.get("clean") else None]
     version = f' <span>{e(" · ".join(t for t in tags if t))}</span>' if any(tags) else ""
@@ -417,7 +468,7 @@ def render_html(s: dict) -> str:
 {table(["Destination", "Why", "Times"], gap_rows, "Nothing. All traffic seen went through the proxy.", {2})}</section>
 
 <section><h2>Written to disk</h2>
-<p class="note">{d["changed_files"]} files changed under {len(d.get("roots", []))} watched folders.
+<p class="note">{d["changed_files"]} files changed under {len(d.get("roots", []))} watched folders.{unreadable_note}
 Encrypted uploads usually show up here as a new archive or large blob.</p>
 {table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}{other_files}</section>
 

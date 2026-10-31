@@ -1,0 +1,3 @@
+include README_zh.md SECURITY.md CHANGELOG.md
+include scripts/check_dependency_audit.py
+include tests/ui_workflows.test.js

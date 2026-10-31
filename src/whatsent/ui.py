@@ -12,11 +12,13 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import math
 import os
 import re
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -28,7 +30,7 @@ from urllib.parse import parse_qs, urlsplit
 import psutil
 
 from whatsent import __version__, apps, canary, report
-from whatsent.cli import Session, print_summary
+from whatsent.cli import Session, _terminate, print_summary, reserve_directory
 
 STATIC = Path(__file__).with_name("ui")
 IDLE_AFTER = 30.0  # seconds without a request before suggesting to reopen the app
@@ -41,8 +43,9 @@ CLIS = {  # command -> shown name; only the ones on PATH can be picked
     "opencode": "opencode",
     "aider": "Aider",
 }
-RUN_ID = re.compile(r"^\d{8}-\d{6}$")
+RUN_ID = re.compile(r"^\d{8}-\d{6}(?:-[1-9]\d*)?$")
 STALE_FILE = ".ui-running.json"
+MAX_BODY = 64 * 1024
 
 
 class UIError(Exception):
@@ -106,11 +109,17 @@ class TerminalAgent:
     def __init__(self, pidfile: Path, exitfile: Path, timeout: float = 30):
         self.exitfile = exitfile
         deadline = time.monotonic() + timeout
-        while not pidfile.exists() or not pidfile.read_text(encoding="utf-8").strip():
+        while True:
+            try:
+                pid = int(pidfile.read_text(encoding="utf-8"))
+                if pid > 0:
+                    self.pid = pid
+                    break
+            except (FileNotFoundError, ValueError):
+                pass
             if time.monotonic() > deadline:
-                raise UIError("terminal", "the terminal window did not start")
+                raise UIError("terminal", "the terminal window did not publish a valid process ID")
             time.sleep(0.1)
-        self.pid = int(pidfile.read_text(encoding="utf-8"))
         try:
             self.proc = psutil.Process(self.pid)
         except psutil.Error:
@@ -122,8 +131,11 @@ class TerminalAgent:
                 return int(self.exitfile.read_text(encoding="utf-8"))
             except ValueError:
                 pass
-        if self.proc is None or not self.proc.is_running() or self.proc.status() == psutil.STATUS_ZOMBIE:
-            return -1  # the window was closed
+        try:
+            if self.proc is None or not self.proc.is_running() or self.proc.status() == psutil.STATUS_ZOMBIE:
+                return -1  # the window was closed
+        except psutil.Error:
+            return -1
         return None
 
     def _signal(self, kill: bool) -> None:
@@ -156,16 +168,20 @@ def terminal_command(script: Path, child_args: list[str]) -> list[str]:
     raise UIError("no_terminal", "no terminal program found")
 
 
-def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, str]) -> TerminalAgent:
-    run_dir = cwd.parent
+def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, str],
+                     timeout: float = 30) -> TerminalAgent:
+    # A reopened terminal must never read a prior launch's PID, exit code or spec.
+    run_dir = reserve_directory(cwd.parent / "terminal")
     added = {k: v for k, v in env.items() if os.environ.get(k) != v}
     pkg_parent = str(Path(__file__).resolve().parent.parent)  # works from a source checkout too
     added["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, os.environ.get("PYTHONPATH")]))
     pidfile, exitfile = run_dir / "agent.pid", run_dir / "agent.exit"
+    cancel_file = run_dir / "cancelled"
     spec = run_dir / "agent.json"
     spec.write_text(json.dumps({"name": name, "command": command, "cwd": str(cwd), "env": added,
                                 "prompt": canary.TASK_PROMPT, "pidfile": str(pidfile),
-                                "exitfile": str(exitfile)}), encoding="utf-8")
+                                "exitfile": str(exitfile), "cancel_file": str(cancel_file),
+                                "launch_deadline": time.monotonic() + timeout}), encoding="utf-8")
     child_args = [sys.executable, "-m", "whatsent.child", str(spec)]
     child_env = {**os.environ, "PYTHONPATH": added["PYTHONPATH"]}
     if sys.platform == "win32":
@@ -178,7 +194,11 @@ def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, st
         script.chmod(0o755)
         subprocess.Popen(terminal_command(script, ["sh", str(script)]), env=child_env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    return TerminalAgent(pidfile, exitfile)
+    try:
+        return TerminalAgent(pidfile, exitfile, timeout=timeout)
+    except BaseException:
+        cancel_file.touch()
+        raise
 
 
 class Job:
@@ -201,6 +221,8 @@ class Job:
         self._pos = 0
         self._partial = b""
         self._gaps: set[tuple] = set()
+        self._requests: set[str] = set()
+        self._pump_lock = threading.Lock()
         self._last_event = time.monotonic()
         self._idle_sent = False
         self._deep_warned = False
@@ -222,15 +244,19 @@ class Job:
             self.state = "failed"
             self.hub.emit("error", code="internal", message=f"{type(exc).__name__}: {exc}")
         finally:
-            self.session.stop_agent()
-            self.session.close()
-            self.ui.clear_stale()
+            try:
+                self.session.stop_agent()
+            finally:
+                self.session.close(final=True)
+                self.ui.clear_stale()
 
     def _steps(self) -> bool:
         s = self.session
         self.hub.emit("job", id=self.id, tool=self.tool, demo=self.demo, prompt=canary.TASK_PROMPT)
         self._step(0, "doing")
         s.prepare()
+        if self.cancelled.is_set():
+            return False
         self.hub.emit("canaries", items=[{k: c[k] for k in ("id", "file", "short", "sensitive")}
                                          for c in s.canaries])
         self._step(0, "done")
@@ -239,6 +265,8 @@ class Job:
             s.start_proxy("local" if self.deep else "env")
         except RuntimeError as exc:
             raise UIError("deep" if self.deep else "recorder", str(exc)) from exc
+        if self.cancelled.is_set():
+            return False
         self._step(1, "done")
         last = 2
         if self.app:
@@ -309,6 +337,10 @@ class Job:
             time.sleep(0.3)
 
     def _pump(self) -> None:
+        with self._pump_lock:
+            self._pump_events()
+
+    def _pump_events(self) -> None:
         """Forward new proxy log lines and newly seen bypassing connections to the page."""
         s = self.session
         path = s.proxy.events_file
@@ -326,8 +358,15 @@ class Job:
         for line in lines:
             try:
                 ev = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
+            if not report.valid_event(ev):
+                continue
+            flow_id = ev.get("flow_id") if ev.get("type") == "http" else None
+            if flow_id:
+                if flow_id in self._requests:
+                    continue
+                self._requests.add(flow_id)
             self._last_event = time.monotonic()
             t = max(0.0, ev.get("ts", time.time()) - t0_wall)
             if ev.get("type") == "tls_failed":
@@ -358,6 +397,8 @@ class Job:
         self.go.set()
 
     def quit_app(self) -> None:
+        if self.state != "needs_quit":
+            raise UIError("state", f"cannot close an existing app while {self.state}")
         for pid in apps.running(self.app) if self.app else []:
             try:
                 psutil.Process(pid).terminate()
@@ -399,6 +440,7 @@ class UI:
         self.token = secrets.token_urlsafe(24)
         self.job: Job | None = None
         self.lock = threading.Lock()
+        self.closing = threading.Event()
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), self._handler())
         self.server.daemon_threads = True
         self.port = self.server.server_address[1]
@@ -406,7 +448,12 @@ class UI:
 
     # A test window left open by a crashed run still points at a proxy that is gone.
     def mark_stale(self, app: apps.ResolvedApp, pid: int) -> None:
-        (self.out / STALE_FILE).write_text(json.dumps({"name": app.name, "exe": str(app.executable), "pid": pid}),
+        try:
+            created = psutil.Process(pid).create_time()
+        except psutil.Error:
+            return
+        (self.out / STALE_FILE).write_text(json.dumps({"name": app.name, "exe": str(app.executable), "pid": pid,
+                                                     "created": created}),
                                            encoding="utf-8")
 
     def clear_stale(self) -> None:
@@ -416,9 +463,9 @@ class UI:
         try:
             info = json.loads((self.out / STALE_FILE).read_text(encoding="utf-8"))
             proc = psutil.Process(info["pid"])
-            if Path(proc.exe()) == Path(info["exe"]):
+            if proc.create_time() == info.get("created") and Path(proc.exe()) == Path(info["exe"]):
                 return info
-        except (OSError, ValueError, KeyError, psutil.Error):
+        except (OSError, ValueError, KeyError, TypeError, psutil.Error):
             pass
         if not (self.job and self.job.active):
             self.clear_stale()
@@ -427,7 +474,12 @@ class UI:
     def close_stale(self) -> None:
         info = self.stale()
         if info:
-            psutil.Process(info["pid"]).terminate()
+            try:
+                proc = psutil.Process(info["pid"])
+                if proc.create_time() == info["created"]:
+                    proc.terminate()
+            except psutil.Error:
+                pass
         self.clear_stale()
 
     def start_job(self, body: dict) -> Job:
@@ -441,7 +493,10 @@ class UI:
             app = None
             if tool_id == "demo":
                 from whatsent.demo import AGENT_NAME, setup
-                args, command = setup(self.out, pace=float(body.get("pace", 1.2)))
+                pace = body.get("pace", 1.2)
+                if isinstance(pace, bool) or not isinstance(pace, (int, float)) or not math.isfinite(pace) or pace < 0:
+                    raise UIError("bad_request", "pace must be a finite nonnegative number")
+                args, command = setup(self.out, pace=pace)
                 tool = {"id": "demo", "name": AGENT_NAME, "kind": "cli"}
                 job = Job(self, tool, args, command, None, demo=True)
             elif tool_id in CLIS:
@@ -505,7 +560,7 @@ class UI:
 
             def _token_ok(self, query: dict) -> bool:
                 given = self.headers.get("X-Whatsent-Token") or (query.get("token") or [""])[0]
-                return secrets.compare_digest(given, ui.token)
+                return secrets.compare_digest(given.encode("utf-8"), ui.token.encode("utf-8"))
 
             def do_GET(self):
                 url = urlsplit(self.path)
@@ -533,8 +588,14 @@ class UI:
                 if url.path == "/api/tools":
                     return self._json(200, {"tools": scan_tools()})
                 if url.path == "/api/events":
-                    since = max(int((query.get("since") or ["0"])[0] or 0),
-                                int(self.headers.get("Last-Event-ID") or 0))
+                    try:
+                        cursors = [int((query.get("since") or ["0"])[0] or 0),
+                                   int(self.headers.get("Last-Event-ID") or 0)]
+                        if min(cursors) < 0:
+                            raise ValueError
+                        since = max(cursors)
+                    except ValueError:
+                        return self._json(400, {"error": "bad event cursor"})
                     return self._events((query.get("job") or [""])[0], since)
                 m = re.fullmatch(r"/runs/([^/]+)/report\.html", url.path)
                 if m and RUN_ID.match(m.group(1)):
@@ -546,7 +607,7 @@ class UI:
 
             def _events(self, job_id: str, since: int) -> None:
                 job = ui.job
-                if job is None or job.id != job_id:
+                if job is None or job.id != job_id or ui.closing.is_set():
                     # 204 tells EventSource to stop reconnecting: the page asks for the new run.
                     return self._send(204, b"", "text/plain")
                 self.send_response(200)
@@ -555,9 +616,9 @@ class UI:
                 self.send_header("Connection", "close")
                 self.end_headers()
                 self.close_connection = True
-                seq = since
+                seq = min(since, len(job.hub.events))
                 try:
-                    while True:
+                    while not ui.closing.is_set():
                         events = job.hub.since(seq, 15)
                         if not events:
                             self.wfile.write(b": keep-alive\n\n")
@@ -571,22 +632,33 @@ class UI:
                     return
 
             def do_POST(self):
+                # Rejected bodies must not be parsed as a second request on this socket.
+                self.close_connection = True
                 url = urlsplit(self.path)
                 if not self._host_ok() or not self._token_ok({}):
                     return self._json(403, {"error": "forbidden"})
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self._json(415, {"error": "json only"})
                 try:
-                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-                    result = self._action(url.path, body if isinstance(body, dict) else {})
+                    if self.headers.get("Transfer-Encoding"):
+                        return self._json(400, {"error": "transfer encoding is unsupported"})
+                    length = int(self.headers.get("Content-Length") or 0)
+                    if length < 0:
+                        raise ValueError
+                    if length > MAX_BODY:
+                        return self._json(413, {"error": "request too large"})
+                    self.connection.settimeout(10)
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                    if not isinstance(body, dict):
+                        raise ValueError
+                    result = self._action(url.path, body)
                 except UIError as exc:
                     return self._json(exc.status, {"error": exc.code, "message": str(exc)})
-                except ValueError:
+                except (ValueError, RecursionError, TimeoutError):
                     return self._json(400, {"error": "bad request"})
                 return self._json(200, result or {"ok": True})
 
             def _action(self, path: str, body: dict):
-                job = ui.job
                 if path == "/api/start":
                     return {"job": ui.start_job(body).id}
                 if path == "/api/pick":
@@ -595,35 +667,50 @@ class UI:
                     return ui.open_settings()
                 if path == "/api/stale/close":
                     return ui.close_stale()
-                if job is None:
-                    raise UIError("no_job", status=409)
-                if path == "/api/launch":
-                    return job.start(bool(body.get("deep")))
-                if path == "/api/quit-app":
-                    return job.quit_app()
-                if path == "/api/relaunch":
-                    return job.relaunch()
-                if path == "/api/stop":
-                    return job.stop()
-                raise UIError("not_found", status=404)
+                with ui.lock:
+                    job = ui.job
+                    if job is None:
+                        raise UIError("no_job", status=409)
+                    if body.get("job") != job.id:
+                        raise UIError("stale_job", "This test is no longer current. Reload the page.", 409)
+                    if path == "/api/launch":
+                        return job.start(bool(body.get("deep")))
+                    if path == "/api/quit-app":
+                        return job.quit_app()
+                    if path == "/api/relaunch":
+                        return job.relaunch()
+                    if path == "/api/stop":
+                        return job.stop()
+                    raise UIError("not_found", status=404)
 
         return Handler
 
     def serve(self, open_browser: bool = True) -> int:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        print(f"whatsent: interface at {self.url}  (Ctrl-C to quit)", file=sys.stderr)
-        if open_browser:
-            webbrowser.open(self.url)
+        old_term = {sig: signal.signal(sig, _terminate) for sig in
+                    filter(None, (getattr(signal, n, None) for n in ("SIGTERM", "SIGHUP")))}
         try:
+            print(f"whatsent: interface at {self.url}  (Ctrl-C to quit)", file=sys.stderr)
+            if open_browser:
+                webbrowser.open(self.url)
             while True:
                 time.sleep(3600)
         except KeyboardInterrupt:
             pass
-        self.shutdown()
+        finally:
+            try:
+                self.shutdown()
+            finally:
+                for sig, handler in old_term.items():
+                    signal.signal(sig, handler)
         return 0
 
     def shutdown(self) -> None:
+        self.closing.set()
         job = self.job
+        if job:
+            with job.hub.cond:
+                job.hub.cond.notify_all()
         if job and job.active:
             print("whatsent: stopping the test and writing the report...", file=sys.stderr)
             job.stop()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import platform
 import shutil
@@ -15,12 +16,11 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import psutil
 
 from whatsent import __version__, agents, apps, board, canary, diskwatch, report
-from whatsent.capture import Proxy, hide_credentials, upstream_from_env
+from whatsent.capture import Proxy, hide_credentials, normalize_upstream, upstream_from_env
 from whatsent.detect import Matcher
 from whatsent.netwatch import ConnectionSampler
 
@@ -85,6 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        return _main(args)
+    except OSError as exc:
+        print(f"whatsent: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(args: argparse.Namespace) -> int:
+    if getattr(args, "port", None) is not None and not 0 <= args.port <= 65535:
+        print("whatsent: --port must be between 0 and 65535 (0 selects a free port)", file=sys.stderr)
+        return 2
     if args.cmd == "demo":
         from whatsent.demo import run_demo
         return run_demo(args)
@@ -101,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.capture != "env" and args.capture != "local" and not args.capture.startswith("local:"):
         print("whatsent: --capture is env, local or local:SPEC", file=sys.stderr)
         return 2
-    if args.timeout is not None and args.timeout <= 0:
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         print("whatsent: --timeout must be more than 0 seconds", file=sys.stderr)
         return 2
     if args.runs < 1:
@@ -110,10 +121,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.clean and args.app:
         print("whatsent: --clean works for CLI agents (claude, codex, codebuddy, copilot), not for IDE apps", file=sys.stderr)
         return 2
-    if args.upstream and args.upstream.lower() != "none" and \
-            urlsplit(args.upstream if "://" in args.upstream else f"http://{args.upstream}").scheme not in ("http", "https"):
-        print("whatsent: --upstream is an http:// or https:// proxy, or none", file=sys.stderr)
-        return 2
+    if args.upstream is not None and args.upstream.strip().lower() != "none":
+        try:
+            args.upstream = normalize_upstream(args.upstream)
+        except ValueError as exc:
+            print(f"whatsent: --upstream is an http:// or https:// proxy, or none: {exc}", file=sys.stderr)
+            return 2
     if not args.app and not command:
         print("whatsent: give the agent command after --, e.g. whatsent run -- claude", file=sys.stderr)
         return 2
@@ -140,6 +153,23 @@ def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | No
         collect: list[dict] | None = None) -> int:
     """One recorded run. With ``collect``, the run's summary is appended to it."""
     session = Session(args, command, app)
+    old_term = {sig: signal.signal(sig, _terminate) for sig in
+                filter(None, (getattr(signal, n, None) for n in ("SIGTERM", "SIGHUP")))}
+    try:
+        return _run_session(session, args, app, collect)
+    finally:
+        try:
+            session.stop_agent()
+        finally:
+            try:
+                session.close(final=True)
+            finally:
+                for sig, handler in old_term.items():
+                    signal.signal(sig, handler)
+
+
+def _run_session(session: "Session", args: argparse.Namespace, app: apps.ResolvedApp | None,
+                 collect: list[dict] | None) -> int:
     print(f"whatsent: snapshotting {len(session.roots)} folders...", file=sys.stderr)
     session.prepare()
     try:
@@ -167,9 +197,6 @@ whatsent: {how}
 
     # Ctrl-C belongs to the agent; we keep running so the report still gets written.
     old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    # Being terminated or losing the terminal must not leave the agent or the proxy running.
-    old_term = {sig: signal.signal(sig, _terminate) for sig in
-                filter(None, (getattr(signal, n, None) for n in ("SIGTERM", "SIGHUP")))}
     try:
         try:
             session.launch()
@@ -185,8 +212,6 @@ whatsent: {how}
         signal.signal(signal.SIGINT, old_sigint)
         session.stop_agent()
         session.close()
-        for sig, handler in old_term.items():
-            signal.signal(sig, handler)
 
     print("whatsent: checking watched folders...", file=sys.stderr)
     summary, html = session.finish()
@@ -202,17 +227,19 @@ whatsent: {how}
 
 def run_many(args: argparse.Namespace, command: list[str]) -> int:
     """Run the agent ``args.runs`` times, then write one combined result."""
+    folder = reserve_directory(args.out / f"{datetime.now():%Y%m%d-%H%M%S}-x{args.runs}")
     summaries: list[dict] = []
     codes = []
     for i in range(args.runs):
         print(f"\nwhatsent: run {i + 1} of {args.runs}", file=sys.stderr)
         each = copy.copy(args)
         each.runs, each.result_to = 1, None
+        each.out = folder
         codes.append(run_app(each, command, summaries) if args.app else run(each, command, collect=summaries))
     if summaries:
         combined = board.combine([board.to_result(s) for s in summaries])
-        folder = args.out / f"{datetime.now():%Y%m%d-%H%M%S}-x{len(summaries)}"
-        folder.mkdir(parents=True, exist_ok=True)
+        if any(codes):
+            combined["warnings"] = max(1, combined["warnings"])
         (folder / "result.json").write_text(json.dumps(combined, indent=2), encoding="utf-8")
         print_combined(combined, folder / "result.json")
         if args.result_to:
@@ -244,9 +271,28 @@ def save_result(result: Path, folder: Path, summary: dict) -> Path:
     A file already there is kept: this batch of runs gets -2, -3 ... and the board combines them."""
     folder.mkdir(parents=True, exist_ok=True)
     batch = 1
-    while (folder / board.result_name(summary, batch)).exists():
-        batch += 1
-    return Path(shutil.copyfile(result, folder / board.result_name(summary, batch)))
+    data = result.read_bytes()
+    while True:
+        target = folder / board.result_name(summary, batch)
+        try:
+            with target.open("xb") as f:
+                f.write(data)
+            return target
+        except FileExistsError:
+            batch += 1
+
+
+def reserve_directory(path: Path) -> Path:
+    """Atomically reserve a new run folder without touching an existing run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    candidate, batch = path, 1
+    while True:
+        try:
+            candidate.mkdir(mode=0o700)
+            return candidate
+        except FileExistsError:
+            batch += 1
+            candidate = path.with_name(f"{path.name}-{batch}")
 
 
 def popen(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen:
@@ -267,6 +313,11 @@ class Session:
         self.args = args
         self.app = app
         self.name = args.name or (app.name if app else Path(command[0]).name)
+        if command and not app:
+            executable = shutil.which(command[0])
+            if executable:
+                # Keep virtualenv symlinks intact, but anchor lookup before changing cwd.
+                command = [os.path.abspath(executable), *command[1:]]
         self.started = datetime.now()
         self.run_dir = (args.out / self.started.strftime("%Y%m%d-%H%M%S")).resolve()
         self.workspace = self.run_dir / "workspace"
@@ -297,7 +348,8 @@ class Session:
         self.duration = 0.0
 
     def prepare(self) -> None:
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir = reserve_directory(self.run_dir)
+        self.workspace = self.run_dir / "workspace"
         self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace)]
         self.canaries_file = self.run_dir / "canaries.json"
         self.canaries_file.write_text(json.dumps(self.canaries, indent=2), encoding="utf-8")
@@ -306,18 +358,21 @@ class Session:
             self.agent_version = (agents.app_version(self.app.executable) if self.app
                                   else agents.detect_version(self.command))
         self.since_ns = time.time_ns()
-        self.before, self.truncated = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+        self.unreadable_before: list[str] = []
+        self.before, self.truncated = diskwatch.snapshot(self.roots, exclude=[self.run_dir],
+                                                         unreadable=self.unreadable_before)
 
     def resolve_upstream(self) -> str | None:
         """The proxy to forward to: --upstream, else the one the agent would have used without us."""
         choice = getattr(self.args, "upstream", None)
-        if choice and choice.lower() == "none":
+        if choice and choice.strip().lower() == "none":
             return None
-        if choice:
-            return choice if "://" in choice else f"http://{choice}"
+        if choice is not None:
+            return normalize_upstream(choice)
         url, problem = upstream_from_env(dict(os.environ))
         if problem:
-            self.warnings.append(problem)
+            raise RuntimeError(f"cannot use upstream proxy: {problem}; correct the proxy settings "
+                               "or explicitly use --upstream none for a direct CLI run")
         return url
 
     def start_proxy(self, capture: str | None = None) -> None:
@@ -341,7 +396,7 @@ class Session:
 
     def agent_command(self) -> list[str]:
         if self.app:
-            return apps.command(self.app, self.proxy.port, self.workspace, self.command)
+            return apps.command(self.app, self.proxy.port, self.workspace, self.command, self.proxy.ca_cert)
         return self.command
 
     def launch(self, launcher=popen) -> None:
@@ -387,6 +442,11 @@ class Session:
     def wait(self) -> None:
         limit = getattr(self.args, "timeout", None)
         while (code := self.agent.poll()) is None:
+            if self.proxy.proc.poll() is not None:
+                self.warnings.append("capture stopped unexpectedly; the run is incomplete")
+                self.stop_agent()
+                code = "capture_failed"
+                break
             if self.stop_requested.wait(0.2):
                 self.stop_agent()
                 code = "stopped"
@@ -406,11 +466,17 @@ class Session:
         report folder that gets shared should not carry."""
         if self.sampler:
             self.direct = self.sampler.stop()
+            self.warnings.extend(sorted(self.sampler.warnings))
             self.sampler = None
         if self.proxy:
             self.proxy.stop()
             if final:
-                self.proxy.forget_keys()
+                for warning in self.proxy.forget_keys():
+                    if warning not in self.warnings:
+                        self.warnings.append(warning)
+                        print(f"whatsent: {warning}", file=sys.stderr)
+        if final and getattr(self.args, "demo_cleanup", None):
+            self.args.demo_cleanup()
 
     def finish(self) -> tuple[dict, Path]:
         self.close(final=True)
@@ -422,11 +488,16 @@ class Session:
         if problem:
             self.warnings.append(problem)
 
-        after, truncated_after = diskwatch.snapshot(self.roots, exclude=[self.run_dir])
+        unreadable_after: list[str] = []
+        after, truncated_after = diskwatch.snapshot(self.roots, exclude=[self.run_dir], unreadable=unreadable_after)
         partial = sorted(set(self.truncated) | set(truncated_after))
         disk = diskwatch.diff(self.before, after, self.matcher, self.since_ns, partial, self.name)
         disk["roots"] = [str(r) for r in self.roots]
         disk["truncated_roots"] = partial
+        disk["unreadable_dirs"] = len(set(self.unreadable_before) | set(unreadable_after))
+        if disk["incomplete_files"]:
+            self.warnings.append(f"{len(disk['incomplete_files'])} changed files could not be fully inspected "
+                                 "(read, size or decoding limits); disk findings are incomplete")
         if partial:
             self.warnings.append(f"{len(partial)} watched {'folder was' if len(partial) == 1 else 'folders were'} "
                                  f"only partly scanned, so the disk findings may be incomplete: "
@@ -450,7 +521,8 @@ class Session:
             "warnings": self.warnings,
             "sample": getattr(args, "sample", False),  # True for the simulated demo agent
         }
-        summary = report.summarize(meta, self.canaries, report.load_events(self.proxy.events_file), disk,
+        events = report.load_events(self.proxy.events_file, warnings=self.warnings)
+        summary = report.summarize(meta, self.canaries, events, disk,
                                    self.direct, home=getattr(args, "home", None),
                                    task_fixed=canary.task_fixed(self.workspace))
         return summary, report.write(summary, self.run_dir)

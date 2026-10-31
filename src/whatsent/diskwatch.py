@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -48,9 +49,14 @@ Snapshot = dict[str, tuple[int, int]]  # path -> (size, mtime_ns)
 
 
 def snapshot(roots: list[Path], exclude: list[Path], seconds: float = ROOT_SECONDS,
-             max_files: int = MAX_FILES_PER_ROOT) -> tuple[Snapshot, list[str]]:
+             max_files: int = MAX_FILES_PER_ROOT,
+             unreadable: list[str] | None = None) -> tuple[Snapshot, list[str]]:
     """Return file stats under ``roots`` and the roots that were only partly scanned
-    (they took longer than ``seconds`` or held more than ``max_files`` files)."""
+    (they took longer than ``seconds``, held more than ``max_files`` files, or could not be listed).
+
+    Folders and files below a root that the user may not read, such as macOS-protected ones, are
+    skipped and added to ``unreadable``; the tool cannot reach them either, so they do not make
+    the root partial."""
     excluded = {os.path.realpath(p) for p in exclude} | {os.path.abspath(p) for p in exclude}
     files: Snapshot = {}
     partial = []
@@ -61,29 +67,43 @@ def snapshot(roots: list[Path], exclude: list[Path], seconds: float = ROOT_SECON
             continue
         deadline = time.monotonic() + seconds
         count = 0
+        incomplete = False
         stack = [root]
         while stack:
             if count >= max_files or time.monotonic() > deadline:
-                partial.append(root)
+                incomplete = True
                 break
             directory = stack.pop()
             try:
                 it = os.scandir(directory)
-            except OSError:
+            except OSError as exc:
+                if isinstance(exc, PermissionError) and directory != root and unreadable is not None:
+                    unreadable.append(directory)
+                else:
+                    incomplete = True
                 continue
             with it:
                 for entry in it:
-                    if len(files) % 4096 == 0 and time.monotonic() > deadline:
-                        break  # one huge folder must not outlast the budget either
+                    if count >= max_files or time.monotonic() > deadline:
+                        incomplete = True
+                        stack.clear()
+                        break
                     try:
-                        if not entry.is_dir(follow_symlinks=False):
+                        if entry.is_file(follow_symlinks=False):
                             st = entry.stat(follow_symlinks=False)
                             files[entry.path] = (st.st_size, st.st_mtime_ns)
                             count += 1
-                        elif entry.name not in NOISY_NAMES and not _skip(entry.path, root, real, excluded):
+                        elif (entry.is_dir(follow_symlinks=False) and entry.name not in NOISY_NAMES
+                              and not _skip(entry.path, root, real, excluded)):
                             stack.append(entry.path)
-                    except OSError:
+                    except OSError as exc:
+                        if isinstance(exc, PermissionError) and unreadable is not None:
+                            unreadable.append(entry.path)
+                        else:
+                            incomplete = True
                         continue
+        if incomplete:
+            partial.append(root)
     return files, partial
 
 
@@ -103,6 +123,7 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
     ``agent`` marks suspicious files whose path does not mention the agent as unrelated."""
     prefixes = tuple(r + os.sep for r in partial)
     leaks, suspicious, changed = [], [], 0
+    incomplete = []
     for path, (size, mtime) in after.items():
         old = before.get(path)
         if old == (size, mtime):
@@ -111,11 +132,24 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
             continue
         changed += 1
         try:
-            with open(path, "rb") as f:
+            # Recheck at open time: a regular file may have become a symlink or FIFO
+            # since the snapshot. O_NONBLOCK prevents waiting for a pipe writer.
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                continue
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            with os.fdopen(os.open(path, flags), "rb") as f:
+                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                    continue
                 data = f.read(MAX_SCAN_BYTES)
         except OSError:
+            incomplete.append(path)
             continue
-        hits = matcher.scan(data)
+        issues = []
+        hits = matcher.scan(data, issues=issues)
+        # Cached HTTP bodies hold stray gzip signatures and change while read; they are still
+        # scanned for canaries, but a decoding gap there does not make the disk findings incomplete.
+        if (len(data) < size or issues) and not _in_chromium_store(path):
+            incomplete.append(path)
         entry = {"path": path, "size": size, "new": old is None}
         if hits:
             leaks.append({**entry, "canaries": sorted(hits)})
@@ -124,14 +158,14 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
             entry["related"] = related(path, agent)
             suspicious.append(entry)
     suspicious.sort(key=lambda e: (not e["related"], -e["size"]))
-    return {"leaks": leaks, "suspicious": suspicious[:50], "changed_files": changed}
+    return {"leaks": leaks, "suspicious": suspicious[:50], "changed_files": changed,
+            "incomplete_files": incomplete}
 
 
 def related(path: str, agent: str | None) -> bool:
     """Whether ``path`` mentions the agent by name (``Trae CN`` matches ``.trae-cn/``, and
     ``demo-agent (simulated)`` matches ``.demo-agent/``). Without a usable name every file counts."""
-    if any(part.lower() in CHROMIUM_STORES or part.lower().endswith(".indexeddb.blob")
-           for part in re.split(r"[\\/]", path)):
+    if _in_chromium_store(path):
         return False
     whole = _squash(agent or "")
     names = {w for w in re.findall(r"[a-z0-9]+", (agent or "").lower()) if len(w) >= 4}
@@ -139,6 +173,11 @@ def related(path: str, agent: str | None) -> bool:
         names.add(whole)
     squashed = _squash(path)
     return not names or any(n in squashed for n in names)
+
+
+def _in_chromium_store(path: str) -> bool:
+    return any(part.lower() in CHROMIUM_STORES or part.lower().endswith(".indexeddb.blob")
+               for part in re.split(r"[\\/]", path))
 
 
 def _squash(text: str) -> str:

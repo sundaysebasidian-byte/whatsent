@@ -13,12 +13,24 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+
+def write_status(path: Path, value: int) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(str(value), encoding="utf-8")
+    temporary.replace(path)
 
 
 def main(argv: list[str] | None = None) -> int:
     spec = json.loads(Path((argv or sys.argv[1:])[0]).read_text(encoding="utf-8"))
-    Path(spec["pidfile"]).write_text(str(os.getpid()), encoding="utf-8")
+    write_status(Path(spec["pidfile"]), os.getpid())
+    if (time.monotonic() >= spec.get("launch_deadline", float("inf"))
+            or (spec.get("cancel_file") and Path(spec["cancel_file"]).exists())):
+        write_status(Path(spec["exitfile"]), 125)
+        print("whatsent: terminal startup expired or was cancelled; the agent was not started.", file=sys.stderr)
+        return 125
     env = {**os.environ, **spec["env"]}
     command = spec["command"]
     print(f"whatsent: recording {spec.get('name', command[0])}. Paste this prompt, let the agent finish, then exit it:\n\n"
@@ -31,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         code = 127
     except KeyboardInterrupt:
         code = 130
-    Path(spec["exitfile"]).write_text(str(code), encoding="utf-8")
+    write_status(Path(spec["exitfile"]), code)
     print("\nwhatsent: done. The report opens in your browser; you can close this window.", flush=True)
     return code
 
