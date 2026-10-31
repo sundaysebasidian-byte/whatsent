@@ -21,6 +21,7 @@
 - Reserve run directories and exported batch files atomically to preserve concurrent runs.
 - Keep individual runs inside their batch and collect the aggregate once, excluding workspace JSON and duplicate input paths.
 - Enforce disk scan limits inside large directories; skip special files and symlinks and recheck at read time.
+- Count folders the user may not read (for example macOS-protected ones) apart as `unreadable_dirs` instead of marking the whole watched folder as partly scanned, which put a warning on every macOS run. Decoding gaps in browser cache entries no longer make the disk findings incomplete; those files are still scanned for canaries.
 - Stop agents when capture fails; clean up CA keys and demo listeners on failure and cancellation. Handle termination during startup and UI shutdown.
 - Restrict IDE certificate exceptions to the per-run CA public key.
 - Validate leaderboard inputs before publication and keep different platforms, capture modes, detector versions and canary definitions separate.
