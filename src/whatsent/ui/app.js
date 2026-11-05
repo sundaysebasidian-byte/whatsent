@@ -2,7 +2,12 @@
 (() => {
   'use strict';
 
-  const TOKEN = document.querySelector('meta[name="whatsent-token"]').content;
+  const TOKEN = (document.querySelector('meta[name="whatsent-token"]') || {}).content || '';
+  // The static demo on GitHub Pages has no server: the page carries events recorded from a real demo run and plays them back.
+  const REPLAY = (() => {
+    const el = document.getElementById('whatsent-replay');
+    try { return el ? JSON.parse(el.textContent) : null; } catch (e) { return null; }
+  })();
   const SVGNS = 'http://www.w3.org/2000/svg';
   const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -67,6 +72,7 @@
       staleSheet: '上次测试没正常结束，设置未改动', closeTest: '关闭测试窗口',
       errSheet: '出了点问题', ok: '知道了', noTerminal: '没找到可以打开的终端程序', busy: '已经有一个测试在运行',
       lost: '和 whatsent 的连接断开了', reload: '重新连接',
+      replay: '回放 · 模拟 Agent', replayAgain: '重播', board: '排行榜',
       staleJob: '此页面对应的测试已结束或被替换，请重新连接查看当前测试',
       canaries: {
         task_file: '任务要改的文件', unrelated_source: '和任务无关的源文件', dotenv: '.env 里的密钥',
@@ -133,20 +139,13 @@
       staleSheet: 'The last test did not end cleanly. Settings are unchanged.', closeTest: 'Close test window',
       errSheet: 'Something went wrong', ok: 'OK', noTerminal: 'No terminal app found', busy: 'A test is already running',
       lost: 'Lost the connection to whatsent', reload: 'Reconnect',
+      replay: 'Replay · simulated agent', replayAgain: 'Replay', board: 'Leaderboard',
       staleJob: 'This test has ended or been replaced. Reconnect to view the current test.',
       canaries: {
         task_file: 'File the task asks about', unrelated_source: 'Unrelated source file', dotenv: 'Secret in .env',
         credentials: 'Cloud credentials', file_name: 'File name only', git_history: 'Git commit message',
       },
     },
-  };
-
-  const TILES = {
-    cursor: ['#4a4952', '#232228'], trae: ['#4d9cf5', '#2563eb'], 'trae-cn': ['#4d9cf5', '#2563eb'],
-    vscode: ['#3fa8f0', '#0b6fb8'], windsurf: ['#34d1bf', '#0e9384'], kiro: ['#a78bfa', '#7c3aed'],
-    qoder: ['#60a5fa', '#1d4ed8'], codebuddy: ['#f472b6', '#db2777'], claude: ['#f09a62', '#d4622c'],
-    codex: ['#9d8ff9', '#6551e8'], gemini: ['#7aa2ff', '#3b5bdb'], qwen: ['#8b7cf6', '#5b47d6'],
-    kimi: ['#4a4952', '#232228'], opencode: ['#6f6d7d', '#3d3c47'], aider: ['#34d399', '#059669'],
   };
 
   // ---------- state ----------
@@ -225,6 +224,7 @@
 
   // ---------- server ----------
   async function api(path, body) {
+    if (REPLAY) return replayApi(path);
     if (body !== undefined && ['/api/launch', '/api/quit-app', '/api/relaunch', '/api/stop'].includes(path)) {
       body = { job: S.job && S.job.id, ...body };
     }
@@ -238,6 +238,26 @@
 
   let es = null;
   let lostTimer = null;
+
+  // Replay: the recorded events come back on their original schedule, as if from the live stream.
+  function replayApi(path) {
+    if (path === '/api/start') return { job: 'replay' };
+    if (path === '/api/stop' && es && es.finish) es.finish();
+    return path === '/api/state' ? { platform: '', stale: null, job: null } : { ok: true };
+  }
+  function replayStream() {
+    const timers = [];
+    let next = 0;
+    const stream = { readyState: 1 };
+    const play = (ev) => {
+      next += 1;
+      if (es === stream) onEvent(ev.kind === 'launched' ? { ...ev, wall: Date.now() / 1000 } : ev);
+    };
+    REPLAY.events.forEach((ev) => timers.push(setTimeout(() => play(ev), ev.at || 0)));
+    stream.close = () => timers.forEach(clearTimeout);
+    stream.finish = () => { stream.close(); REPLAY.events.slice(next).forEach(play); };  // "End test" skips ahead
+    return stream;
+  }
   function disconnect() {
     clearTimeout(lostTimer);
     if (es) es.close();
@@ -245,6 +265,7 @@
   }
   function connect(jobId) {
     disconnect();
+    if (REPLAY) { es = replayStream(); return; }
     const stream = new EventSource(`/api/events?job=${encodeURIComponent(jobId)}&since=0&token=${encodeURIComponent(TOKEN)}`);
     es = stream;
     stream.onmessage = (e) => { if (es === stream) onEvent(JSON.parse(e.data)); };
@@ -377,25 +398,25 @@
   }
 
   // ---------- chrome (title bar, progress) ----------
+  const REPO_URL = 'https://github.com/sundaysebasidian-byte/whatsent';
   const win = document.getElementById('win');
   const crumb = h('div', { class: 'crumb' });
+  const pill = REPLAY ? h('span', { class: 'pill' }) : null;
+  if (REPLAY) win.classList.add('rp');
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Language' });
   const hairFill = h('i');
   const screenBox = h('div');
-  win.append(
-    h('div', { class: 'titlebar' },
-      h('div', { class: 'lights', 'aria-hidden': 'true' }, h('span', { class: 'tl r' }), h('span', { class: 'tl y' }), h('span', { class: 'tl g' })),
-      crumb, seg),
-    h('div', { class: 'hair' }, hairFill), screenBox);
+  win.append(h('div', { class: 'topbar' }, crumb, pill, seg), h('div', { class: 'hair' }, hairFill), screenBox);
 
   function chrome() {
     const t = T();
     const idx = ['pick', 'prep', 'live', 'report'].indexOf(S.screen);
-    crumb.replaceChildren(h('span', {}, 'whatsent'));
+    crumb.replaceChildren(h(REPLAY ? 'a' : 'span', { class: 'brand', href: REPLAY ? REPO_URL : null }, icon(EYE, 18, 'currentColor', 2), h('span', { class: 'wm' }, 'whatsent')));
     if (idx >= 0) {
-      crumb.append(h('span', { class: 'sep lbl' }, '/'), h('span', { class: 'cur lbl' }, t.steps[idx]),
+      crumb.append(h('span', { class: 'lbl' }, '/'), h('span', { class: 'cur lbl' }, t.steps[idx]),
         h('span', { class: 'n' }, `${idx + 1}/4`));
     }
+    if (pill) pill.textContent = t.replay;
     seg.replaceChildren(
       h('button', { type: 'button', class: S.lang === 'zh' ? 'on' : '', onclick: () => setLang('zh') }, '中文'),
       h('button', { type: 'button', class: S.lang === 'en' ? 'on' : '', onclick: () => setLang('en') }, 'EN'));
@@ -454,10 +475,10 @@
   function welcomeScreen() {
     const t = T();
     const el = h('div', { class: 'screen' },
-      h('div', { class: 'hero' },
-        h('div', { class: 'logo' }, icon(EYE, 34, '#fff', 1.8)),
+      h('div', { class: 'welcome' },
+        h('div', { class: 'logo' }, icon(EYE, 28, 'currentColor', 1.9)),
         h('h1', {}, t.welcomeTitle), h('p', {}, t.welcomeSub)),
-      h('div', { class: 'promises' }, t.promises.map((p) => h('span', {}, icon(CHECK, 14, '#4ade80', 2.6), p))),
+      h('div', { class: 'promises' }, t.promises.map((p) => h('span', {}, icon(CHECK, 14, 'currentColor', 2.6), p))),
       bar(grow(), btn(t.demo, '⌘D', startDemo), btn(t.start, '↵', () => go('pick'), 'primary')));
     return { el, primary: () => go('pick') };
   }
@@ -481,14 +502,14 @@
     pathInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); usePath(); } });
     const pathRow = h('div', { class: 'pathrow' }, pathInput, btn(t.use, null, usePath, 'soft'));
     const manualBtn = h('button', { class: 'item', type: 'button', onclick: chooseManually },
-      h('span', { class: 'ico plain' }, icon('M3 7h6l2 2h10v10H3z', 14, '#c9c8d2')), h('span', { class: 'sub' }, t.manual));
+      h('span', { class: 'ico plain' }, icon('M3 7h6l2 2h10v10H3z', 14, 'currentColor')), h('span', { class: 'sub' }, t.manual));
     const body = h('div', { class: 'body list' }, listBox, manualBtn, pathRow);
     const next = () => {
       const tool = (S.tools || []).find((x) => x.id === S.sel);
       if (tool && tool.installed) startJob({ tool: tool.id });
     };
     const el = h('div', { class: 'screen' },
-      h('div', { class: 'search' }, icon(['<c11,11,7', 'M20 20l-3.5-3.5'], 18, '#9a99a6'), input, count),
+      h('div', { class: 'search' }, icon(['<c11,11,7', 'M20 20l-3.5-3.5'], 18, 'currentColor'), input, count),
       body,
       bar(grow(), btn(t.back, 'esc', () => go('welcome')), btn(t.next, '↵', next, 'primary')));
 
@@ -508,9 +529,7 @@
     }
     function toolRow(x) {
       const sel = x.id === S.sel;
-      const tile = TILES[x.id];
-      const ico = h('span', { class: x.installed ? 'ico' : 'ico off' }, x.name.charAt(0));
-      if (x.installed && tile) ico.style.background = `linear-gradient(145deg,${tile[0]},${tile[1]})`;
+      const ico = h('span', { class: x.installed ? 'ico' : 'ico off', 'aria-hidden': 'true' }, x.name.charAt(0));
       return h('button', {
         class: `item${sel ? ' sel' : ''}`, type: 'button', disabled: !x.installed, 'aria-pressed': String(sel),
         title: x.kind === 'app' ? t.hintApp(x.name) : t.hintCli(x.name),
@@ -571,7 +590,7 @@
     const count = h('span', { class: 'mono sub' });
     const startBtn = btn(t.startTest, '↵', launch, 'primary');
     const safe = h('span', { class: 'sub safe grow' },
-      icon('M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z', 14, '#4ade80'), t.safeTitle);
+      icon('M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z', 14, 'currentColor'), t.safeTitle);
     const el = h('div', { class: 'screen' },
       h('div', { class: 'head' }, title),
       h('div', { class: 'body' }, list, deepRow),
@@ -633,12 +652,13 @@
     const rec = h('span', { class: 'rec' });
     const title = h('h1');
     const elapsed = h('span', { class: 'mono elapsed' }, '00:00');
-    const sample = h('span', { class: 'chip sample' }, t.sample);
+    const sample = h('span', { class: 'chip' }, t.sample);
     const todo = h('div', { class: 'sub' });
     const promptCode = h('code');
     const copyBtn = btn(t.copy, '⌘C', copyPrompt, 'soft');
     const promptCard = h('div', { class: 'card prompt' }, h('div', {}, todo, promptCode), copyBtn);
     const alertBox = h('div', { role: 'alert' });
+    title.tabIndex = -1;
     const metrics = [t.stRequests, t.stHosts, t.stUp, t.stGaps].map((label) => {
       const b = h('b');
       return { box: h('div', { class: 'metric' }, b, h('span', {}, label)), b };
@@ -676,7 +696,7 @@
     function update() {
       const n = toolName();
       title.textContent = t.liveTitle(n);
-      sample.hidden = !(S.job && S.job.demo);
+      sample.hidden = REPLAY || !(S.job && S.job.demo);
       promptCard.hidden = !S.prompt || (S.job && S.job.demo);
       todo.textContent = isApp() ? t.todoApp(n) : t.todoCli;
       promptCode.textContent = S.prompt;
@@ -716,7 +736,7 @@
       if (alertText !== lastAlert) {
         lastAlert = alertText;
         alertBox.replaceChildren(alertText ? h('div', { class: 'alert' },
-          icon(['M12 3l10 18H2z', 'M12 10v5', 'M12 18h.01'], 16, '#ff6369', 2.2), alertText) : '');
+          icon(['M12 3l10 18H2z', 'M12 10v5', 'M12 18h.01'], 16, 'currentColor', 2.2), alertText) : '');
       }
       canBox.replaceChildren(...S.canaries.map((c) => {
         const sent = sentTo[c.id];
@@ -738,7 +758,7 @@
     if (ev.kind === 'gap') {
       return h('div', { class: 'frow gap' }, h('span', { class: 'mono tm' }, mmss(ev.t)),
         h('span', { class: 'what' }, h('code', { class: 'host' }, ev.host), h('span', { class: 'sub' }, t.gapWhat[ev.why] || t.gapWhat.tcp)),
-        h('span', { class: 'chip gap' }, t.gapChip), h('span', { class: 'mono sz' }, '–'));
+        h('span', { class: 'chip' }, t.gapChip), h('span', { class: 'mono sz' }, '–'));
     }
     const ids = ev.canaries.filter((id) => byId[id]);
     const secret = ids.some((id) => byId[id].sensitive);
@@ -746,7 +766,7 @@
     return h('div', { class: `frow${secret ? ' leak' : ''}` }, h('span', { class: 'mono tm' }, mmss(ev.t)),
       h('span', { class: 'what' }, h('code', { class: 'host' }, ev.host),
         h('span', { class: 'sub mono' }, trunc(`${ev.method} ${ev.path}`, 80))),
-      first ? h('span', { class: `chip ${secret ? 'secret' : 'file'}` }, canaryLabel(byId[first]) + (ids.length > 1 ? ` +${ids.length - 1}` : '')) : null,
+      first ? h('span', { class: `chip ${secret ? 'bad' : 'warn'}` }, canaryLabel(byId[first]) + (ids.length > 1 ? ` +${ids.length - 1}` : '')) : null,
       h('span', { class: 'mono sz' }, humanBytes(ev.bytes)));
   }
 
@@ -754,16 +774,23 @@
   // small dots travelling along them. Groups are kept by host so updates do not flash.
   function makeFlow(t) {
     const MAX = 5;
-    const svg = sv('svg', { class: 'flow', viewBox: '0 0 730 170', role: 'img', 'aria-label': t.flowTitle });
+    const svg = sv('svg', { class: 'flow', role: 'img', 'aria-label': t.flowTitle });
     const groups = sv('g');
-    const local = sv('g', {},
-      sv('circle', { cx: 120, cy: 0, r: 22, fill: '#26252d', stroke: 'rgba(255,255,255,0.16)' }),
-      sv('circle', { cx: 120, cy: 0, r: 5, fill: '#b4a7ff' }),
-      sv('text', { x: 120, y: 42, 'text-anchor': 'middle', fill: '#f2f2f5', 'font-size': 12, 'font-weight': 600 }, t.local),
-      sv('text', { x: 120, y: 58, 'text-anchor': 'middle', fill: '#9a99a6', 'font-size': 10.5, class: 'h' }, '127.0.0.1'));
+    const lc = sv('circle', { class: 'node', r: 22 });
+    const lp = sv('circle', { class: 'pupil', r: 5 });
+    const l1 = sv('text', { class: 't1', y: 42, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600 }, t.local);
+    const l2 = sv('text', { class: 'h', y: 58, 'text-anchor': 'middle', 'font-size': 10.5 }, '127.0.0.1');
+    const local = sv('g', {}, lc, lp, l1, l2);
     svg.append(groups, local);
     const byKey = new Map();
+    let last = [];
+    let narrow = null;
+    const isNarrow = () => !!svg.parentNode && svg.parentNode.clientWidth < 520;
     function update(hosts) {
+      last = hosts;
+      narrow = isNarrow();
+      const W = narrow ? 360 : 730;               // phones get a tighter drawing, so the text stays readable
+      const lx = narrow ? 44 : 120; const ex = narrow ? 176 : 496; const limit = narrow ? 22 : 26;
       let list = hosts.slice().sort((a, b) => (a.gap - b.gap) || (b.bytes - a.bytes));
       if (list.length > MAX) {
         const rest = list.slice(MAX - 1);
@@ -775,18 +802,18 @@
       const spacing = 66;
       const H = Math.max(170, (n - 1) * spacing + 110);  // the diagram grows with the destinations
       const cy = H / 2;
-      svg.setAttribute('viewBox', `0 0 730 ${H}`);
-      local.setAttribute('transform', `translate(0 ${cy - 16})`);
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      local.setAttribute('transform', `translate(${lx} ${cy - 16})`);
       const keep = new Set();
       list.forEach((x, i) => {
         keep.add(x.key);
         const ly = cy - 16;
         const y = Math.round(ly + (i - (n - 1) / 2) * spacing);
-        const d = `M142 ${ly} C 300 ${ly}, 360 ${y}, 496 ${y}`;
-        const color = x.secret ? '#ff6369' : x.gap ? '#9a99a6' : x.file ? '#fbbf24' : '#b4a7ff';
+        const d = `M${lx + 22} ${ly} C ${lx + 180} ${ly}, ${ex - 136} ${y}, ${ex} ${y}`;
+        const state = x.secret ? 'secret' : x.gap ? 'gap' : x.file ? 'file' : '';
         let g = byKey.get(x.key);
         if (!g) {
-          g = { el: sv('g', { class: 'hg' }) };
+          g = { el: sv('g') };
           g.path = sv('path', { class: 'ln' });
           g.dots = [];
           if (!x.gap && !reduceMotion()) {
@@ -799,32 +826,35 @@
               g.dots.push({ dot, motion });
             }
           }
-          g.end = sv('circle', { cx: 500, r: 3.5 });
-          g.t1 = sv('text', { x: 514, fill: '#f2f2f5', 'font-size': 12, class: 'h' });
-          g.t2 = sv('text', { x: 514, 'font-size': 11 });
+          g.end = sv('circle', { class: 'end', r: 3.5 });
+          g.t1 = sv('text', { class: 'h t1', 'font-size': 12 });
+          g.t2 = sv('text', { class: 't2', 'font-size': 11 });
           g.title = sv('title');
           g.el.append(g.title, g.path, ...g.dots.map((p) => p.dot), g.end, g.t1, g.t2);
           groups.append(g.el);
           byKey.set(x.key, g);
         }
+        g.el.setAttribute('class', `hg ${state}`.trim());
         if (g.d !== d) {
           g.d = d;
           g.path.setAttribute('d', d);
           g.dots.forEach((p) => p.motion.setAttribute('path', d));
         }
-        g.path.setAttribute('stroke', color);
-        g.path.setAttribute('stroke-opacity', x.secret ? '0.9' : '0.45');
-        g.dots.forEach((p) => p.dot.setAttribute('fill', color));
-        g.end.setAttribute('cy', y);
-        g.end.setAttribute('fill', color);
-        g.t1.setAttribute('y', y - 2);
-        g.t1.textContent = trunc(x.label, 26);
+        g.end.setAttribute('cx', ex + 4); g.end.setAttribute('cy', y);
+        g.t1.setAttribute('x', ex + 18); g.t1.setAttribute('y', y - 2);
+        g.t1.textContent = trunc(x.label, limit);
         g.title.textContent = x.label;
-        g.t2.setAttribute('y', y + 13);
-        g.t2.setAttribute('fill', x.secret ? '#ffb4b6' : '#9a99a6');
+        g.t2.setAttribute('x', ex + 18); g.t2.setAttribute('y', y + 13);
         g.t2.textContent = x.gap ? t.gapChip : humanBytes(x.bytes);
       });
       for (const [key, g] of byKey) if (!keep.has(key)) { g.el.remove(); byKey.delete(key); }
+    }
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => {
+        if (!svg.isConnected) ro.disconnect();
+        else if (isNarrow() !== narrow) update(last);
+      });
+      ro.observe(win);
     }
     return { svg, update };
   }
@@ -846,12 +876,13 @@
   }
   function checkRows(r, t) {
     const ctl = controlStatus(r);
+    const row = (cls, mark, c, where) => ({ cls, mark, label: canaryLabel(c), where });
     return r.canaries.map((c) => {
-      if (c.id === 'task_file' && ctl !== 'ok' && !c.sent_to.length) return { cls: 'file', mark: '?', label: canaryLabel(c), where: t.expected };
-      if (c.sent_to.length) return { cls: c.sensitive ? 'secret' : 'file', mark: c.sensitive ? '✕' : '→', label: canaryLabel(c), where: t.sentTo(c.sent_to.join(', ')) };
-      if (c.on_disk) return { cls: c.sensitive ? 'secret' : 'file', mark: '!', label: canaryLabel(c), where: t.diskOnly };
-      if (ctl !== 'ok' || r.warnings.length || r.totals.not_inspected) return { cls: 'unk', mark: '–', label: canaryLabel(c), where: t.unconfirmed };
-      return { cls: 'ok', mark: '✓', label: canaryLabel(c), where: t.notSeenLong };
+      if (c.id === 'task_file' && ctl !== 'ok' && !c.sent_to.length) return row('unk', '?', c, t.expected);
+      if (c.sent_to.length) return row(c.sensitive ? 'secret' : 'file', c.sensitive ? '✕' : '→', c, t.sentTo(c.sent_to.join(', ')));
+      if (c.on_disk) return row(c.sensitive ? 'secret' : 'file', '!', c, t.diskOnly);
+      if (ctl !== 'ok' || r.warnings.length || r.totals.not_inspected) return row('unk', '–', c, t.unconfirmed);
+      return row('ok', '✓', c, t.notSeenLong);
     });
   }
   function reportMeta(r, t) { return `${String(r.started_at).replace('T', ' ').slice(0, 16)} · ${t.dur(r.duration_s)}`; }
@@ -880,52 +911,60 @@
     const statEls = stats.map(([label, v, fmt]) => {
       const b = h('b');
       counter(b, (x) => (fmt === String ? String(Math.round(x)) : fmt(x)))(v);
-      return h('div', { class: 'metric' }, b, h('span', {}, label));
+      return h('div', {}, b, h('span', {}, label));
     });
-    const card = h('div', { class: `share ${tone}` },
-      h('div', { class: 'top' },
-        h('span', { class: 'brand' }, h('i', {}, icon(EYE, 13, '#fff', 2.4)), 'whatsent'),
-        h('span', { class: 'mono meta' }, reportMeta(r, t))),
-      h('div', { class: 'who' }, reportName(r), r.sample ? h('span', { class: 'chip sample' }, t.sample) : null),
-      h('h2', {}, headline), h('p', { class: 'subline' }, subline),
-      h('div', { class: 'checks enter' }, checkRows(r, t).map((c) => h('div', { class: `ck ${c.cls}` }, h('span', { class: 'm' }, c.mark),
-        h('span', {}, h('span', { class: 'l' }, c.label), h('small', { class: 'mono' }, c.where))))),
+    const title = h('h2', { tabindex: '-1' }, headline);
+    const card = h('div', { class: `hero ${tone}` },
+      h('div', { class: 'agent' }, reportName(r), r.sample && !REPLAY ? h('span', { class: 'chip' }, t.sample) : null,
+        h('span', { class: 'meta' }, reportMeta(r, t))),
+      title, h('p', {}, subline),
+      h('ul', { class: 'checks enter' }, checkRows(r, t).map((c) => h('li', { class: c.cls }, h('b', { 'aria-hidden': 'true' }, c.mark),
+        h('div', {}, c.label, h('small', {}, c.where))))),
       h('div', { class: 'stats' }, statEls));
-    const openFull = () => window.open(`${r.url}?token=${encodeURIComponent(TOKEN)}`, '_blank', 'noopener');
+    const openFull = () => window.open(REPLAY ? r.url : `${r.url}?token=${encodeURIComponent(TOKEN)}`, '_blank', 'noopener');
     const exportImg = () => {
       const file = `whatsent-${(reportName(r) || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'report'}.png`;
       drawCard(r, t, tone, headline, subline).toBlob((blob) => {
         const a = h('a', { href: URL.createObjectURL(blob), download: file });
         document.body.append(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        toastBox.replaceChildren(h('div', { class: 'toast', role: 'status' }, icon(CHECK, 15, '#4ade80', 2.6), t.exported(file)));
+        toastBox.replaceChildren(h('div', { class: 'toast', role: 'status' }, icon(CHECK, 15, 'currentColor', 2.6), t.exported(file)));
       }, 'image/png');
     };
-    const again = () => { S.report = null; S.job = null; S.deep = false; go('pick'); };
+    const again = () => { S.report = null; if (REPLAY) return startDemo(); S.job = null; S.deep = false; return go('pick'); };
     const el = h('div', { class: 'screen' },
-      h('div', { class: 'body stack' }, toastBox, notices, card),
-      bar(grow(), btn(t.again, null, again), btn(t.openFull, '⌘O', openFull), btn(t.exportImg, '⌘E', exportImg, 'primary')));
-    return { el, primary: exportImg, exportImg, openFull };
+      h('div', { class: 'rpt stack' }, toastBox, notices, card),
+      bar(grow(), btn(REPLAY ? t.replayAgain : t.again, null, again),
+        REPLAY ? h('a', { class: 'btn', href: '../' }, t.board) : null,
+        btn(t.openFull, '⌘O', openFull), btn(t.exportImg, '⌘E', exportImg, 'primary')));
+    return { el, primary: exportImg, exportImg, openFull, focus: () => title.focus({ preventScroll: true }) };
   }
 
   // The share card as a PNG, drawn directly on a canvas (no page screenshot, works offline).
+  // It takes its colours from the page's own tokens, so it matches light or dark mode.
   function drawCard(r, t, tone, headline, subline) {
     const W = 1000; const P = 48; const scale = 2;
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim();
     const sans = getComputedStyle(document.body).fontFamily;
-    const mono = '"SF Mono", ui-monospace, Menlo, Consolas, monospace';
-    const glow = { bad: '255,99,105', warn: '251,191,36', good: '74,222,128', unknown: '154,153,166' }[tone];
-    const subInk = { bad: '#ffb4b6', warn: '#f3d48a', good: '#a7f0c1', unknown: '#c8c7d0' }[tone];
+    const mono = v('--mono');
+    const k = { bad: 'red', warn: 'amber', good: 'green', unknown: 'grey' }[tone];
+    const ink = v('--ink'); const ink2 = v('--ink-2');
+    const kinds = { ok: 'green', file: 'amber', unk: 'grey', secret: 'red' };
     const checks = checkRows(r, t);
     const canvas = document.createElement('canvas');
     let ctx = canvas.getContext('2d');
     const layout = (draw) => {
       let y = P;
-      const text = (s, x, yy, font, color, align = 'left') => {
+      const text = (s, x, yy, font, color, align = 'left', spacing = '0px') => {
         if (!draw) return;
-        ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'alphabetic'; ctx.fillText(s, x, yy);
+        ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+        if ('letterSpacing' in ctx) ctx.letterSpacing = spacing;
+        ctx.fillText(s, x, yy);
       };
       const wrap = (s, font, maxW) => {
         ctx.font = font;
+        if ('letterSpacing' in ctx) ctx.letterSpacing = '-1.7px';
         const lines = []; let line = '';
         for (const ch of s.split(/(\s+)/).flatMap((w) => (/[　-鿿]/.test(w) ? [...w] : [w]))) {
           if (ctx.measureText(line + ch).width > maxW && line.trim()) { lines.push(line.trim()); line = ch.trimStart(); } else line += ch;
@@ -934,59 +973,55 @@
         return lines;
       };
       if (draw) {
-        rrect(ctx, 0, 0, W, canvas.height / scale, 28); ctx.fillStyle = '#1d1c23'; ctx.fill();
-        ctx.save(); rrect(ctx, 0, 0, W, canvas.height / scale, 28); ctx.clip();
-        let g = ctx.createRadialGradient(0, 0, 0, 0, 0, W * 0.7);
-        g.addColorStop(0, `rgba(${glow},.30)`); g.addColorStop(1, `rgba(${glow},0)`);
-        ctx.fillStyle = g; ctx.fillRect(0, 0, W, canvas.height / scale);
-        g = ctx.createRadialGradient(W, canvas.height / scale, 0, W, canvas.height / scale, W * 0.6);
-        g.addColorStop(0, 'rgba(116,98,238,.24)'); g.addColorStop(1, 'rgba(116,98,238,0)');
-        ctx.fillStyle = g; ctx.fillRect(0, 0, W, canvas.height / scale);
-        ctx.restore();
-        const lg = ctx.createLinearGradient(P, y, P + 36, y + 36);
-        lg.addColorStop(0, '#9d8ff9'); lg.addColorStop(1, '#6551e8');
-        rrect(ctx, P, y, 36, 36, 10); ctx.fillStyle = lg; ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        const H = canvas.height / scale;
+        rrect(ctx, 0, 0, W, H, 28); ctx.fillStyle = v('--win') || v('--bg'); ctx.fill();
+        rrect(ctx, 0.5, 0.5, W - 1, H - 1, 28); ctx.fillStyle = v(`--${k}-bg`); ctx.fill();
+        ctx.strokeStyle = v(`--${k}-line`); ctx.lineWidth = 1; ctx.stroke();
+        rrect(ctx, P, y, 36, 36, 10); ctx.fillStyle = ink; ctx.fill();
+        ctx.strokeStyle = v('--bg'); ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.beginPath(); ctx.moveTo(P + 7, y + 18); ctx.quadraticCurveTo(P + 18, y + 5, P + 29, y + 18);
         ctx.quadraticCurveTo(P + 18, y + 31, P + 7, y + 18); ctx.stroke();
         ctx.beginPath(); ctx.arc(P + 18, y + 18, 4, 0, Math.PI * 2); ctx.stroke();
       }
-      text('whatsent', P + 48, y + 25, `700 22px ${sans}`, '#f2f2f5');
-      text(reportMeta(r, t), W - P, y + 25, `400 18px ${mono}`, '#9a99a6', 'right');
-      y += 36 + 40;
-      text(reportName(r) + (r.sample ? `  ·  ${t.sample}` : ''), P, y, `600 22px ${sans}`, '#c9c8d2');
-      y += 18;
-      const hFont = `700 50px ${sans}`;
-      for (const line of wrap(headline, hFont, W - 2 * P)) { y += 60; text(line, P, y, hFont, '#f2f2f5'); }
+      text('whatsent', P + 48, y + 25, `650 22px ${sans}`, ink);
+      text(reportMeta(r, t), W - P, y + 25, `400 18px ${mono}`, ink2, 'right');
+      y += 36 + 44;
+      if (draw) { ctx.beginPath(); ctx.arc(P + 5, y - 7, 5, 0, Math.PI * 2); ctx.fillStyle = v(`--${k}`); ctx.fill(); }
+      text(reportName(r) + (r.sample ? `  ·  ${t.sample}` : ''), P + 20, y, `600 22px ${sans}`, ink);
+      y += 14;
+      const hFont = `700 52px ${sans}`;
+      for (const line of wrap(headline, hFont, W - 2 * P)) { y += 58; text(line, P, y, hFont, ink, 'left', '-1.7px'); }
       y += 40;
-      text(subline, P, y, `500 24px ${sans}`, subInk);
-      y += 30;
-      const colW = (W - 2 * P - 12) / 2; const boxH = 72;
+      text(subline, P, y, `500 24px ${sans}`, v(`--${k}-ink`));
+      y += 32;
+      const colW = (W - 2 * P - 12) / 2; const boxH = 76;
       checks.forEach((c, i) => {
         const x = P + (i % 2) * (colW + 12); const yy = y + Math.floor(i / 2) * (boxH + 10);
         if (!draw) return;
-        rrect(ctx, x, yy, colW, boxH, 14);
-        ctx.fillStyle = c.cls === 'secret' ? 'rgba(255,99,105,.14)' : 'rgba(255,255,255,.05)'; ctx.fill();
-        const mc = { ok: ['rgba(74,222,128,.18)', '#4ade80'], file: ['rgba(251,191,36,.18)', '#fbbf24'], secret: ['#ff6369', '#1d0608'], unk: ['rgba(154,153,166,.18)', '#c8c7d0'] }[c.cls];
-        ctx.beginPath(); ctx.arc(x + 30, yy + boxH / 2, 13, 0, Math.PI * 2); ctx.fillStyle = mc[0]; ctx.fill();
-        text(c.mark, x + 30, yy + boxH / 2 + 6, `700 16px ${sans}`, mc[1], 'center');
-        text(trunc(c.label, 30), x + 56, yy + 31, `500 19px ${sans}`, '#f2f2f5');
-        text(trunc(c.where, 40), x + 56, yy + 55, `400 15px ${mono}`, '#9a99a6');
+        const q = kinds[c.cls];
+        rrect(ctx, x, yy, colW, boxH, 14); ctx.fillStyle = v('--raised'); ctx.fill();
+        if (c.cls === 'secret') { ctx.fillStyle = v('--red-bg'); ctx.fill(); }
+        ctx.strokeStyle = c.cls === 'secret' ? v('--red-line') : v('--line'); ctx.lineWidth = 1; ctx.stroke();
+        ctx.beginPath(); ctx.arc(x + 32, yy + boxH / 2, 13, 0, Math.PI * 2);
+        ctx.fillStyle = c.cls === 'secret' ? v('--red') : v(`--${q}-bg`); ctx.fill();
+        text(c.mark, x + 32, yy + boxH / 2 + 6, `700 16px ${sans}`, c.cls === 'secret' ? v('--on-red') : v(`--${q}-ink`), 'center');
+        text(trunc(c.label, 30), x + 58, yy + 33, `600 19px ${sans}`, ink);
+        text(trunc(c.where, 40), x + 58, yy + 58, `400 15px ${mono}`, ink2);
       });
       y += Math.ceil(checks.length / 2) * (boxH + 10) + 22;
-      if (draw) { ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(P, y, W - 2 * P, 1); }
+      if (draw) { ctx.fillStyle = v(`--${k}-line`); ctx.fillRect(P, y, W - 2 * P, 1); }
       y += 52;
       const stats = [[r.totals.hosts, t.rHosts], [r.totals.requests, t.rReq], [humanBytes(r.totals.bytes_out), t.rUp], [r.totals.not_inspected, t.rGap]];
       let x = P;
-      for (const [v, label] of stats) {
-        ctx.font = `600 34px ${sans}`;
-        const w = Math.max(ctx.measureText(String(v)).width, (ctx.font = `400 16px ${sans}`, ctx.measureText(label).width));
-        text(String(v), x, y, `600 34px ${sans}`, '#f2f2f5');
-        text(label, x, y + 26, `400 16px ${sans}`, '#9a99a6');
+      for (const [val, label] of stats) {
+        ctx.font = `650 34px ${sans}`;
+        const w = Math.max(ctx.measureText(String(val)).width, (ctx.font = `400 16px ${sans}`, ctx.measureText(label).width));
+        text(String(val), x, y, `650 34px ${sans}`, ink);
+        text(label, x, y + 26, `400 16px ${sans}`, ink2);
         x += w + 56;
       }
       y += 26 + 44;
-      text('github.com/sundaysebasidian-byte/whatsent', W - P, y - 8, `400 14px ${mono}`, '#6e6d79', 'right');
+      text('github.com/sundaysebasidian-byte/whatsent', W - P, y - 8, `400 14px ${mono}`, ink2, 'right');
       return y;
     };
     const height = layout(false) + 8;
@@ -1041,6 +1076,7 @@
   // ---------- start ----------
   async function init() {
     render(true);
+    if (REPLAY) { S.platform = ''; startDemo(); return; }
     try {
       const st = await api('/api/state');
       S.platform = st.platform;

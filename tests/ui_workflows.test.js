@@ -13,7 +13,7 @@ function page(fetch) {
   const dialogs = [];
   const context = vm.createContext({
     fetch, navigator: { language: 'en' }, localStorage: { getItem: () => null },
-    document: { querySelector: () => ({ content: 'test-token' }) },
+    document: { querySelector: () => ({ content: 'test-token' }), getElementById: () => null },
     setTimeout, clearTimeout,
     EventSource: class {
       static OPEN = 1;
