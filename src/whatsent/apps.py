@@ -17,8 +17,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import psutil
-
 
 @dataclass(frozen=True)
 class AppInfo:
@@ -109,6 +107,8 @@ def _real_binary(path: Path) -> Path:
 def running(app: ResolvedApp) -> list[int]:
     """PIDs of an already running copy. Electron apps hand a second launch over to the
     running instance, which would then run outside whatsent."""
+    import psutil
+
     pids = []
     for proc in psutil.process_iter(["exe"]):
         try:

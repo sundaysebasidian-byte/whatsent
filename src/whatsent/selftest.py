@@ -1,0 +1,179 @@
+"""Small, deterministic offline corpus; not a measurement of real-agent coverage."""
+
+from __future__ import annotations
+
+import base64
+from dataclasses import dataclass
+import gzip
+import io
+import random
+import tarfile
+from urllib.parse import quote_from_bytes
+import zipfile
+import zlib
+
+from whatsent.detect import Matcher, StreamMatcher, _zstd_module, decode_body, decode_framed
+
+TOKENS = {'task_file': 'wsc00123456789abcdef', 'dotenv': 'wsc2fedcba9876543210'}
+LIMITS = (
+    'This deterministic offline corpus checks exact synthetic-token detection, not real-agent capture coverage. '
+    'Expansion shares a 200 MiB output budget with four recursive levels, 4,096 archive members and '
+    '64 base64 candidates or embedded streams per blob; RPC envelopes also have a 4,096-frame limit. '
+    'HTTP uploads retain at most 200 MiB of wire data. WebSocket reassembly retains only a token-sized '
+    'outbound overlap per connection; compressed containers split beyond it and opaque application '
+    'encryption remain unreadable. Unavailable codecs, damaged containers and exhausted decoding '
+    'or capture limits are reported as uninspected; this table does not prove zero false positives '
+    'outside the corpus.'
+)
+
+
+@dataclass(frozen=True)
+class Case:
+    name: str
+    data: bytes | tuple[bytes, ...]
+    expected: frozenset[str]
+    encoding: str = ''
+    framed: bool = False
+
+
+@dataclass
+class Result:
+    name: str
+    cases: int = 0
+    failures: int = 0
+    issues: tuple[str, ...] = ()
+
+
+def _zip(data: bytes, name: str = 'payload.txt') -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, data)
+    return buf.getvalue()
+
+
+def _tar(data: bytes, name: str = 'payload.txt') -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w') as archive:
+        member = tarfile.TarInfo(name)
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _zstd(data: bytes) -> bytes:
+    mod = _zstd_module()
+    if mod is None:
+        raise RuntimeError('zstd codec unavailable')
+    return mod.compress(data) if hasattr(mod, 'compress') else mod.ZstdCompressor().compress(data)
+
+
+def encoded_cases(data: bytes, expected: frozenset[str]):
+    """Reusable encoding/container generator for positive and negative input."""
+    yield Case('plain', data, expected)
+    yield Case('url-encoded', quote_from_bytes(data, safe='').encode(), expected)
+    # Force every byte to be escaped, including otherwise URL-safe token characters.
+    yield Case('url-all-bytes', b''.join(f'%{b:02X}'.encode() for b in data), expected)
+    for offset in range(3):
+        yield Case(f'base64 offset {offset}', base64.b64encode(b'x' * offset + data), expected)
+        yield Case(f'base64url offset {offset}', base64.urlsafe_b64encode(b'\xfb\xff' * offset + data).rstrip(b'='), expected)
+    yield Case('gzip', gzip.compress(data, mtime=0), expected)
+    yield Case('multi-member gzip', gzip.compress(b'ordinary', mtime=0) + gzip.compress(data, mtime=0), expected)
+    yield Case('zstd', _zstd(data), expected)
+    yield Case('multi-frame zstd', _zstd(b'ordinary') + _zstd(data), expected)
+    yield Case('zlib', zlib.compress(data), expected)
+    compressor = zlib.compressobj(wbits=-15)
+    yield Case('raw deflate (HTTP)', compressor.compress(data) + compressor.flush(), expected, 'deflate')
+    yield Case('zip', _zip(data), expected)
+    yield Case('tar', _tar(data), expected)
+    yield Case('zip-in-gzip', gzip.compress(_zip(data), mtime=0), expected)
+    for name, packed in [('gzip', gzip.compress(data, mtime=0)), ('zip', _zip(data)), ('zstd', _zstd(data))]:
+        yield Case(f'base64({name})', b'{"blob":"' + base64.b64encode(packed) + b'"}', expected)
+    yield Case('url(gzip)', b''.join(f'%{b:02x}'.encode() for b in gzip.compress(data, mtime=0)), expected)
+    for name, packed in [('gzip', gzip.compress(data, mtime=0)), ('zstd', _zstd(data))]:
+        frame = b'\x01' + len(packed).to_bytes(4, 'big') + packed
+        yield Case(f'gRPC {name} (embedded)', frame, expected)
+        yield Case(f'gRPC {name} (header)', frame, expected, name, True)
+    import brotli
+    packed = brotli.compress(data)
+    yield Case('brotli (HTTP)', packed, expected, 'br')
+    yield Case('Connect brotli (header)', b'\x01' + len(packed).to_bytes(4, 'big') + packed, expected, 'br', True)
+    yield Case('stacked HTTP encodings', gzip.compress(zlib.compress(data), mtime=0), expected, 'deflate, gzip')
+    yield Case('hex lower', data.hex().encode(), expected)
+    yield Case('hex upper', data.hex().upper().encode(), expected)
+    yield Case('UTF-16LE', data.decode().encode('utf-16le'), expected)
+    yield Case('UTF-16BE', data.decode().encode('utf-16be'), expected)
+    yield Case('JSON Unicode escapes', b''.join(f'\\u{b:04x}'.encode() for b in data), expected)
+    yield Case('websocket-split', tuple(data[i:i + 3] for i in range(0, len(data), 3)), expected)
+
+
+def corpus():
+    expected = frozenset(TOKENS)
+    payload = ('KEY=' + ' '.join(TOKENS.values()) + '\n').encode()
+    yield from encoded_cases(payload, expected)
+    for pack, label in ((_zip, 'zip filename'), (_tar, 'tar filename')):
+        yield Case(label, pack(b'ordinary', ' '.join(TOKENS.values())), expected)
+    token = TOKENS['task_file'].encode()
+    for split in range(1, len(token)):
+        yield Case('websocket every split', (token[:split], token[split:]), frozenset({'task_file'}))
+    for offset in range(3):
+        data = base64.b64encode(b'x' * (1000 + offset) + TOKENS['task_file'].encode() + b'suffix')
+        for split in range(len(data) - 30, len(data) - 6):
+            yield Case('websocket base64 long prefix', (data[:split], data[split:]), frozenset({'task_file'}))
+    rng = random.Random(20261105)
+    for size in (0, 1, 16, 128, 1024, 8192):
+        for _ in range(8):
+            yield Case('negative random bytes', rng.randbytes(size), frozenset())
+    for token in TOKENS.values():
+        for i, char in enumerate(token):
+            changed = (token[:i] + ('e' if char != 'e' else 'f') + token[i + 1:]).encode()
+            for case in encoded_cases(changed, frozenset()):
+                yield Case('negative one-character mutations', case.data, case.expected, case.encoding, case.framed)
+    for case in encoded_cases(b'wsc09999999999999999 wsc28888888888888888', frozenset()):
+        yield Case('negative other-run tokens', case.data, case.expected, case.encoding, case.framed)
+
+
+def evaluate(case: Case, matcher: Matcher) -> tuple[bool, tuple[str, ...]]:
+    issues: list[str] = []
+    if isinstance(case.data, tuple):
+        stream = StreamMatcher(matcher)
+        hits: set[str] = set()
+        for chunk in case.data:
+            hits |= stream.scan(chunk, issues=issues)
+    else:
+        decoded = (decode_framed(case.data, case.encoding, issues) if case.framed
+                   else decode_body(case.data, case.encoding, issues))
+        hits = matcher.scan(decoded, issues=issues)
+    return hits == case.expected, tuple(issues)
+
+
+def run_corpus() -> list[Result]:
+    matcher = Matcher(TOKENS)
+    results: dict[str, Result] = {}
+    for case in corpus():
+        result = results.setdefault(case.name, Result(case.name))
+        passed, issues = evaluate(case, matcher)
+        result.cases += 1
+        result.failures += not passed
+        result.issues = tuple(dict.fromkeys((*result.issues, *issues)))
+    return list(results.values())
+
+
+def render(results: list[Result], *, markdown: bool = False) -> str:
+    rows = [(r.name, str(r.cases), '✓' if not r.failures else f'✗ ({r.failures} failed)') for r in results]
+    if markdown:
+        lines = ['| Encoding / corpus | Cases | Exact matches |', '| --- | ---: | :---: |']
+        lines.extend(f'| {name} | {count} | {status} |' for name, count, status in rows)
+        lines.extend(['', LIMITS])
+    else:
+        width = max(len(row[0]) for row in rows)
+        lines = [f'{name:<{width}}  {status}  ({count})' for name, count, status in rows]
+    warnings = sorted({issue for r in results if not r.name.startswith('negative') for issue in r.issues})
+    if warnings:
+        lines.extend(['', 'Uninspected: ' + '; '.join(warnings)])
+    return '\n'.join(lines) + '\n'
+
+
+def main(*, markdown: bool = False) -> int:
+    results = run_corpus()
+    print(render(results, markdown=markdown), end='')
+    return int(any(r.failures for r in results))
