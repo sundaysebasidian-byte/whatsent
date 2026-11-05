@@ -61,9 +61,9 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement through the
 repository's [private vulnerability reporting](https://github.com/sundaysebasidian-byte/whatsent/security/advisories/new)
-or by contacting the maintainer through a direct message on GitHub. Reports are
-reviewed and handled as confidentially as the platform allows. Do not open a
-public issue for a conduct report.
+or by opening an issue that asks for a private channel, without describing the
+incident in public. Reports are reviewed and handled as confidentially as the
+platform allows. Do not open a public issue that names the people involved.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
