@@ -123,3 +123,88 @@ def test_archive_expansion_limit_is_reported_as_uninspected(recorder, monkeypatc
     monkeypatch.setattr(detect, "MAX_EXPANDED", 128)
     rec.request(post(gzip.compress(PROMPT.encode() * 20), None))
     assert "limit" in read()[0]["undecoded"]
+
+
+def test_websocket_split_is_connection_local_and_outbound_only(recorder):
+    rec, read = recorder
+    first, second = tflow.twebsocketflow(messages=False), tflow.twebsocketflow(messages=False)
+    for flow, content, outbound in (
+        (first, TOKEN[:7].encode(), True), (second, TOKEN[7:].encode(), True),
+        (first, b'server-only', False), (first, TOKEN[7:13].encode(), True),
+        (first, TOKEN[13:].encode(), True),
+    ):
+        flow.websocket.messages.append(websocket.WebSocketMessage(Opcode.TEXT, outbound, content))
+        rec.websocket_message(flow)
+    assert [ev['canaries'] for ev in read()] == [[], [], [], ['task_file']]
+
+
+def test_streamed_upload_is_scanned_and_counts_wire_bytes(recorder):
+    rec, read = recorder
+    flow = post(b'', None)
+    flow.request.stream = True
+    rec.requestheaders(flow)
+    chunks = [TOKEN[:8].encode(), TOKEN[8:].encode()]
+    for chunk in chunks:
+        assert flow.request.stream(chunk) == chunk
+    flow.request.stream(b'')
+    flow.request.raw_content = None
+    rec.request(flow)
+    event = read()[0]
+    assert event['canaries'] == ['task_file'] and not event['undecoded']
+    assert event['bytes_out'] >= len(TOKEN)
+
+
+def test_streamed_upload_limit_is_visible(recorder, monkeypatch):
+    import whatsent._addon as addon
+    monkeypatch.setattr(addon, 'MAX_CAPTURE_BODY', 8)
+    rec, read = recorder
+    flow = post(b'', None)
+    flow.request.stream = True
+    rec.requestheaders(flow)
+    flow.request.stream(b'x' * 20 + TOKEN.encode())
+    flow.request.raw_content = None
+    rec.request(flow)
+    assert 'limit' in read()[0]['undecoded']
+
+
+def test_raw_body_is_scanned_even_with_incorrect_content_encoding(recorder):
+    rec, read = recorder
+    flow = post(TOKEN.encode() + b'x' * 100, 'deflate')
+    rec.request(flow)
+    assert read()[0]['canaries'] == ['task_file']
+
+
+def test_http_trailers_are_scanned(recorder):
+    from mitmproxy.http import Headers
+    rec, read = recorder
+    flow = post(b'ordinary', None)
+    flow.request.trailers = Headers([(b'x-checksum', TOKEN.encode())])
+    rec.request(flow)
+    assert read()[0]['canaries'] == ['task_file']
+
+
+def test_brotli_rpc_message_with_header_is_scanned(recorder):
+    import brotli
+    rec, read = recorder
+    data = brotli.compress(PROMPT.encode())
+    flow = post(b'\x01' + len(data).to_bytes(4, 'big') + data, None)
+    flow.request.headers['content-type'] = 'application/connect+proto'
+    flow.request.headers['connect-content-encoding'] = 'br'
+    rec.request(flow)
+    assert read()[0]['canaries'] == ['task_file'] and not read()[0]['undecoded']
+
+
+def test_stream_state_remains_compatible_with_flow_saving(recorder):
+    from mitmproxy.io import FlowWriter
+    rec, _ = recorder
+    flow = tflow.twebsocketflow(messages=False)
+    flow.websocket.messages.append(websocket.WebSocketMessage(Opcode.TEXT, True, TOKEN[:8].encode()))
+    rec.websocket_message(flow)
+    FlowWriter(io.BytesIO()).add(flow)
+    upload = post(b'', None)
+    rec.requestheaders(upload)
+    upload.request.stream(TOKEN.encode())
+    upload.request.stream(b'')
+    upload.request.raw_content = None
+    rec.request(upload)
+    FlowWriter(io.BytesIO()).add(upload)

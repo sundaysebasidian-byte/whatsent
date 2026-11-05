@@ -148,7 +148,7 @@ def diff(before: Snapshot, after: Snapshot, matcher: Matcher, since_ns: int = 0,
         hits = matcher.scan(data, issues=issues)
         # Cached HTTP bodies hold stray gzip signatures and change while read; they are still
         # scanned for canaries, but a decoding gap there does not make the disk findings incomplete.
-        if (len(data) < size or issues) and not _in_chromium_store(path):
+        if len(data) < size or (issues and not _in_chromium_store(path)):
             incomplete.append(path)
         entry = {"path": path, "size": size, "new": old is None}
         if hits:
