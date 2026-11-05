@@ -285,49 +285,146 @@ def _verdict(s: dict) -> tuple[str, str, str]:
 
 REPO = "github.com/sundaysebasidian-byte/whatsent"
 
-CSS = """
-:root{color-scheme:light;--bg:#f4f5f7;--card:#fff;--ink:#14161a;--mute:#5d6470;--line:#e3e6eb;--bad:#cf222e;
---warn:#b35c00;--good:#1a7f37;--chip:#eef1f4}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
-font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,"PingFang SC","Noto Sans CJK SC",sans-serif}
-main{max-width:980px;margin:0 auto;padding:24px 16px 40px}
-a{color:inherit}
-.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
-.brand{font-weight:750;letter-spacing:.01em;text-decoration:none}.brand span{color:var(--mute);font-weight:400}
-.meta{color:var(--mute);font-size:13px}
-.hero{border-radius:16px;padding:24px 26px 22px;margin:14px 0 18px;color:#fff}
-.hero.bad{background:linear-gradient(135deg,#a3121b,#e5484d)}.hero.warn{background:linear-gradient(135deg,#9a4d00,#e09b2d)}
-.hero.good{background:linear-gradient(135deg,#126329,#2ea043)}
-.hero.unknown{background:linear-gradient(135deg,#353b45,#6b7280)}
-.agent{font-size:15px;opacity:.95;font-weight:600}.agent span{opacity:.75;font-weight:400}
-.hero h1{margin:4px 0 0;font-size:34px;line-height:1.15;letter-spacing:-.01em}.hero p{margin:6px 0 0;opacity:.93;font-size:17px}
-.checks{list-style:none;padding:0;margin:18px 0 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px}
-.checks li{background:rgba(255,255,255,.14);border-radius:10px;padding:8px 12px;display:flex;gap:10px;align-items:baseline}
-.checks li.leak{background:rgba(0,0,0,.22)}
-.checks b{font-size:15px;min-width:1.1em}.checks small{display:block;opacity:.85;font-size:12.5px;word-break:break-all}
-.stats{display:flex;gap:26px;flex-wrap:wrap;margin-top:18px}.stats b{display:block;font-size:22px;line-height:1.2}
-.stats span{opacity:.85;font-size:13px}
-section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 16px}
-h2{font-size:17px;margin:0 0 6px}.note{color:var(--mute);font-size:13px;margin:2px 0 10px}
-.scroll{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:7px 8px;border-top:1px solid var(--line);vertical-align:top}
-th{color:var(--mute);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-top:0;white-space:nowrap}
-td.num{text-align:right;white-space:nowrap}th.num{text-align:right}
-.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;background:var(--chip);margin:1px 2px 1px 0;white-space:nowrap}
-.chip.bad{background:#ffebe9;color:var(--bad)}.chip.warn{background:#fff4e0;color:var(--warn)}.chip.good{background:#e6f6ea;color:var(--good)}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;overflow-wrap:anywhere}
-details{margin-top:4px}summary{cursor:pointer;color:var(--mute);font-size:13px}
-details code{display:block;background:var(--chip);padding:8px 10px;border-radius:8px;margin-top:6px}
-.ctlbox{background:#fff;border:2px solid var(--warn);border-radius:12px;padding:12px 16px;margin:0 0 16px;font-size:14.5px}
-.ctlbox b{display:block;font-size:16px;margin-bottom:2px}
-.warnbox{background:#fff4e0;border:1px solid #f1c27d;color:#6b3a00;border-radius:12px;padding:10px 14px;margin:0 0 16px;font-size:14px}
-.empty{color:var(--mute)}footer{color:var(--mute);font-size:12px;text-align:center;margin-top:22px}
-@media (max-width:560px){.hero{padding:20px 18px}.hero h1{font-size:27px}.stats{gap:18px}
-.chip{white-space:normal;border-radius:8px}.hide-sm{display:none}table.wide{min-width:520px}}
+# One visual system for the report, the leaderboard and the web app. ``ui/app.css`` starts with the
+# same CORE block (tests/test_ui.py keeps them identical): tokens, base, chips and the verdict card.
+TOKENS = """:root{color-scheme:light dark;
+--sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+--fs-1:12px;--fs-2:13px;--fs-3:15px;--fs-4:18px;--fs-5:26px;--fs-6:clamp(30px,5.4vw,52px);
+--sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:40px;--sp-7:64px;
+--r-1:6px;--r-2:10px;--r-3:18px;--ease:cubic-bezier(.32,.72,0,1);
+--bg:#fff;--panel:#f7f7f8;--raised:#fff;--line:#e4e5e8;--line-2:#cfd1d6;--ink:#0c0d0f;--ink-2:#565c66;
+--red:#d1242f;--red-ink:#b1161f;--red-bg:#fdecec;--red-line:#f4c3c6;--on-red:#fff;
+--amber:#cc8400;--amber-ink:#8a4b00;--amber-bg:#fff3d9;--amber-line:#f0d38f;--on-amber:#3a2400;
+--green:#1a8a45;--green-ink:#12642f;--green-bg:#e7f6ec;--green-line:#bde3ca;--on-green:#fff;
+--grey:#6b717c;--grey-ink:#4b515b;--grey-bg:#eff0f2;--grey-line:#d9dce1;--on-grey:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0a0a0c;--panel:#111114;--raised:#18181c;--line:#26262c;--line-2:#36363e;--ink:#f5f5f7;--ink-2:#a3a4ae;
+--red:#ff5c64;--red-ink:#ffa0a5;--red-bg:rgba(255,92,100,.12);--red-line:rgba(255,92,100,.34);--on-red:#2b0508;
+--amber:#f5b33f;--amber-ink:#f3c978;--amber-bg:rgba(245,179,63,.11);--amber-line:rgba(245,179,63,.3);--on-amber:#2b1b00;
+--green:#42d17c;--green-ink:#7fe2a5;--green-bg:rgba(66,209,124,.11);--green-line:rgba(66,209,124,.28);--on-green:#04230f;
+--grey:#8e929d;--grey-ink:#b7bac3;--grey-bg:rgba(255,255,255,.06);--grey-line:rgba(255,255,255,.14);--on-grey:#101012}}"""
+
+CORE = TOKENS + """
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs-3)/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-1)}
+code,kbd,.mono{font-family:var(--mono)}
+code{font-size:var(--fs-2);overflow-wrap:anywhere}
+.chip{display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;font-size:var(--fs-1);font-weight:600;line-height:1.6;
+background:var(--grey-bg);color:var(--grey-ink);margin:1px 4px 1px 0;white-space:nowrap}
+.chip.bad{background:var(--red-bg);color:var(--red-ink)}.chip.warn{background:var(--amber-bg);color:var(--amber-ink)}
+.chip.good{background:var(--green-bg);color:var(--green-ink)}
+.hero{--tone:var(--grey);--tone-ink:var(--grey-ink);--tone-bg:var(--grey-bg);--tone-line:var(--grey-line);
+border-radius:var(--r-3);padding:var(--sp-6) 32px var(--sp-5);background:var(--tone-bg);border:1px solid var(--tone-line)}
+.hero.bad{--tone:var(--red);--tone-ink:var(--red-ink);--tone-bg:var(--red-bg);--tone-line:var(--red-line)}
+.hero.warn{--tone:var(--amber);--tone-ink:var(--amber-ink);--tone-bg:var(--amber-bg);--tone-line:var(--amber-line)}
+.hero.good{--tone:var(--green);--tone-ink:var(--green-ink);--tone-bg:var(--green-bg);--tone-line:var(--green-line)}
+.agent{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;font-size:var(--fs-3);font-weight:600}
+.agent::before{content:"";flex:none;width:9px;height:9px;border-radius:50%;background:var(--tone)}
+.agent>span:not(.chip){color:var(--ink-2);font-weight:400}
+.hero h1,.hero h2{margin:var(--sp-3) 0 0;font-size:var(--fs-6);line-height:1.05;letter-spacing:-.035em;font-weight:700;text-wrap:balance;overflow-wrap:anywhere}
+.hero p{margin:var(--sp-2) 0 0;font-size:var(--fs-4);line-height:1.4;color:var(--tone-ink);text-wrap:pretty}
+.checks{list-style:none;margin:var(--sp-5) 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-2)}
+.checks li{display:flex;gap:10px;align-items:flex-start;padding:var(--sp-3) 14px;border-radius:var(--r-2);background:var(--raised);border:1px solid var(--line)}
+.checks b{flex:none;width:22px;height:22px;margin-top:1px;border-radius:50%;display:grid;place-items:center;font-size:var(--fs-1);line-height:1;
+background:var(--grey-bg);color:var(--grey-ink)}
+.checks div{min-width:0;font-size:14px;font-weight:600;line-height:1.35}
+.checks small{display:block;margin-top:2px;font:400 var(--fs-1)/1.4 var(--mono);color:var(--ink-2);overflow-wrap:anywhere}
+.checks li.ok b{background:var(--green-bg);color:var(--green-ink)}
+.checks li.file b{background:var(--amber-bg);color:var(--amber-ink)}
+.checks li.secret{background:var(--red-bg);border-color:var(--red-line)}.checks li.secret b{background:var(--red);color:var(--on-red)}
+.stats{display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-6);margin-top:var(--sp-5);padding-top:var(--sp-4);border-top:1px solid var(--tone-line)}
+.stats b{display:block;font-size:var(--fs-5);line-height:1.15;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stats span{font-size:var(--fs-2);color:var(--ink-2)}
+@media(max-width:700px){.checks{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.hero{padding:var(--sp-5) var(--sp-4) var(--sp-4)}.checks{grid-template-columns:minmax(0,1fr)}.stats{gap:var(--sp-3) var(--sp-5)}}
 """
 
+PAGE_CSS = """
+main{max-width:880px;margin:0 auto;padding:var(--sp-6) var(--sp-4) var(--sp-7)}
+.top{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-5)}
+.brand{display:inline-flex;align-items:center;gap:var(--sp-2);font-weight:650;letter-spacing:-.01em;text-decoration:none}
+.brand svg{width:20px;height:20px;flex:none}
+.brand span{color:var(--ink-2);font-weight:400}
+.meta{color:var(--ink-2);font:var(--fs-2) var(--mono)}
+.nav{display:flex;align-items:baseline;gap:var(--sp-4);flex-wrap:wrap;font-size:var(--fs-2)}.nav a{color:var(--ink-2)}.nav a:hover{color:var(--ink)}
+section{margin-top:var(--sp-7);padding-top:var(--sp-5);border-top:1px solid var(--line)}
+h2{font-size:var(--fs-4);font-weight:650;letter-spacing:-.015em;line-height:1.3;margin:0}
+h2+.scroll,h2+.empty{margin-top:var(--sp-3)}
+.note{color:var(--ink-2);font-size:var(--fs-2);margin:var(--sp-1) 0 var(--sp-4);max-width:64ch}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;padding:0 var(--sp-3) var(--sp-2) 0;color:var(--ink-2);font-size:var(--fs-1);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+td{text-align:left;padding:var(--sp-3) var(--sp-3) var(--sp-3) 0;border-top:1px solid var(--line);vertical-align:top}
+th:last-child,td:last-child{padding-right:0}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+summary{cursor:pointer;color:var(--ink-2);font-size:var(--fs-2);margin-top:var(--sp-3)}summary:hover{color:var(--ink)}
+details code{display:block;background:var(--panel);border:1px solid var(--line);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-2);margin-top:var(--sp-2)}
+.notice{border:1px solid var(--line-2);border-left:3px solid var(--grey);background:var(--panel);border-radius:var(--r-2);padding:var(--sp-3) var(--sp-4);margin:var(--sp-3) 0 0;font-size:14px}
+.notice b{display:block;font-size:var(--fs-3);margin-bottom:2px}
+.empty{color:var(--ink-2)}
+footer{margin-top:var(--sp-7);color:var(--ink-2);font-size:var(--fs-1);text-align:center;overflow-wrap:anywhere}
+@media(max-width:640px){
+main{padding:var(--sp-5) var(--sp-4) var(--sp-6)}section{margin-top:var(--sp-6)}
+.chip{white-space:normal;border-radius:var(--r-1)}
+.scroll{overflow:visible}
+table.stack thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+table.stack,table.stack tbody,table.stack tr{display:block;width:100%}
+table.stack tr{padding:var(--sp-3) 0;border-top:1px solid var(--line)}
+table.stack td{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px var(--sp-1);border:0;padding:2px 0;text-align:left!important;white-space:normal}
+table.stack td::before{content:attr(data-label);flex:0 0 6.5rem;font-size:var(--fs-1);color:var(--ink-2)}
+table.stack td code{flex:1 1 0;min-width:0}
+table.stack td:first-child{display:block;font-weight:600;padding-bottom:var(--sp-1)}table.stack td:first-child::before{display:none}
+}
+@media print{
+:root{color-scheme:light;--bg:#fff;--panel:#f7f7f8;--raised:#fff;--line:#e4e5e8;--line-2:#cfd1d6;--ink:#0c0d0f;--ink-2:#565c66;
+--red:#d1242f;--red-ink:#b1161f;--red-bg:#fdecec;--red-line:#f4c3c6;--on-red:#fff;
+--amber:#cc8400;--amber-ink:#8a4b00;--amber-bg:#fff3d9;--amber-line:#f0d38f;
+--green:#1a8a45;--green-ink:#12642f;--green-bg:#e7f6ec;--green-line:#bde3ca;
+--grey:#6b717c;--grey-ink:#4b515b;--grey-bg:#eff0f2;--grey-line:#d9dce1}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+main{padding:0}.hero,section,tr{break-inside:avoid}
+}
+"""
 
-def render_html(s: dict) -> str:
+CSS = CORE + PAGE_CSS
+
+# The eye, in the current text colour.
+MARK = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/>'
+        '<circle cx="12" cy="12" r="3"/></svg>')
+FAVICON = ('<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E'
+           '%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%230c0d0f%27/%3E%3Cg fill=%27none%27 stroke=%27%23fff%27 '
+           'stroke-width=%274.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27M10 32s8-15 22-15 22 15 22 15-8 '
+           '15-22 15-22-15-22-15z%27/%3E%3Ccircle cx=%2732%27 cy=%2732%27 r=%276.5%27/%3E%3C/g%3E%3C/svg%3E">')
+
+
+def check_rows(s: dict) -> list[tuple[str, str, str, str]]:
+    """(state, glyph, label, where) for each canary. States: ok, file, unk, secret."""
+    unconfirmed_task = control_status(s) != "ok"
+    incomplete = unconfirmed_task or bool(s.get("warnings")) or bool(s["totals"].get("not_inspected"))
+    rows = []
+    for c in s["canaries"]:
+        if c["id"] == "task_file" and unconfirmed_task and not c["sent_to"]:
+            row = ("unk", "?", "expected to leave, not seen")
+        elif c["sent_to"]:
+            # Ordinary project files going to the model are expected; only secrets get the cross.
+            row = ("secret", "✕", "sent to " + ", ".join(c["sent_to"])) if c["sensitive"] else \
+                ("file", "→", "sent to " + ", ".join(c["sent_to"]))
+        elif c["on_disk"]:
+            row = ("secret" if c["sensitive"] else "file", "!", "not sent, but copied into local files")
+        elif incomplete:
+            row = ("unk", "–", "not seen, unconfirmed")
+        else:
+            row = ("ok", "✓", "not seen leaving")
+        rows.append((row[0], row[1], _short(c), row[2]))
+    return rows
+
+
+def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
+    """The one-page report. ``nav`` adds links to sibling pages (the published sample report uses it)."""
     e = escape
     tone, headline, sub = _verdict(s)
     t = s["totals"]
@@ -337,40 +434,25 @@ def render_html(s: dict) -> str:
         c = by_id.get(cid, {"id": cid})
         return f'<span class="chip {"bad" if c.get("sensitive") else "warn"}">{e(_short(c))}</span>'
 
-    def table(headers: list[str], rows: list[list[str]], empty: str, nums: set[int] = frozenset(),
-              hide_sm: set[int] = frozenset(), wide: bool = True) -> str:
+    def table(headers: list[str], rows: list[list[str]], empty: str, nums: set[int] = frozenset()) -> str:
         if not rows:
             return f'<p class="empty">{e(empty)}</p>'
 
         def cls(i: int) -> str:
-            names = " ".join(n for n, on in (("num", i in nums), ("hide-sm", i in hide_sm)) if on)
-            return f' class="{names}"' if names else ""
+            return ' class="num"' if i in nums else ""
 
         head = "".join(f"<th{cls(i)}>{e(h)}</th>" for i, h in enumerate(headers))
-        body = "".join("<tr>" + "".join(f"<td{cls(i)}>{c}</td>" for i, c in enumerate(r)) + "</tr>"
-                       for r in rows)
-        tag = '<table class="wide">' if wide else "<table>"
-        return (f'<div class="scroll">{tag}'
+        body = "".join(
+            "<tr>" + "".join(f'<td{cls(i)} data-label="{e(headers[i])}">{c}</td>' for i, c in enumerate(r)) + "</tr>"
+            for r in rows)
+        return (f'<div class="scroll"><table class="stack">'
                 f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>")
 
     ctl = control_status(s)
     unconfirmed_task = ctl != "ok"
     incomplete = unconfirmed_task or bool(s.get("warnings")) or bool(t["not_inspected"])
-    checks = []
-    for c in s["canaries"]:
-        if c["id"] == "task_file" and unconfirmed_task and not c["sent_to"]:
-            mark, cls, where = "?", "", "expected to leave, not seen"
-        elif c["sent_to"]:
-            # Ordinary project files going to the model are expected; only secrets get the cross.
-            mark, cls = ("✕", "leak") if c["sensitive"] else ("→", "")
-            where = "sent to " + ", ".join(c["sent_to"])
-        elif c["on_disk"]:
-            mark, cls, where = "!", "leak" if c["sensitive"] else "", "not sent, but copied into local files"
-        elif incomplete:
-            mark, cls, where = "–", "", "not seen, unconfirmed"
-        else:
-            mark, cls, where = "✓", "", "not seen leaving"
-        checks.append(f'<li class="{cls}"><b>{mark}</b><div>{e(_short(c))}<small>{e(where)}</small></div></li>')
+    checks = "".join(f'<li class="{state}"><b aria-hidden="true">{mark}</b><div>{e(label)}<small>{e(where)}</small></div></li>'
+                     for state, mark, label, where in check_rows(s))
 
     canary_rows = []
     for c in s["canaries"]:
@@ -378,7 +460,7 @@ def render_html(s: dict) -> str:
             status = "".join(f'<span class="chip {"bad" if c["sensitive"] else "warn"}">sent to {e(h)}</span>'
                              for h in c["sent_to"])
         elif c["id"] == "task_file" and unconfirmed_task:
-            status = '<span class="chip warn">expected to leave, not seen</span>'
+            status = '<span class="chip">expected to leave, not seen</span>'
         elif incomplete:
             status = '<span class="chip">not seen, unconfirmed</span>'
         else:
@@ -434,28 +516,29 @@ def render_html(s: dict) -> str:
     version = f' <span>{e(" · ".join(t for t in tags if t))}</span>' if any(tags) else ""
     when = e(str(s["started_at"]).replace("T", " ")[:16])
     agent = s.get("agent") or (s["command"][0] if s.get("command") else "agent")
+    links = "".join(f'<a href="{e(href)}">{e(text)}</a>' for text, href in (nav or []))
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>whatsent: {e(agent)}</title><style>{CSS}</style></head>
+<meta name="color-scheme" content="light dark">
+<title>whatsent: {e(agent)}</title>{FAVICON}<style>{CSS}</style></head>
 <body><main>
-<div class="top"><a class="brand" href="https://{REPO}">whatsent <span>· what did your AI agent send?</span></a>
-<span class="meta">{when} · {human_duration(s["duration_s"])} · exit {e(str(s["exit_code"]))}</span></div>
+<div class="top"><a class="brand" href="https://{REPO}">{MARK}<b>whatsent</b> <span>what did your AI agent send?</span></a>
+<div class="nav">{links}<span class="meta">{when} · {human_duration(s["duration_s"])} · exit {e(str(s["exit_code"]))}</span></div></div>
 <div class="hero {tone}"><div class="agent">{e(agent)}{version}</div>
 <h1>{e(headline)}</h1><p>{e(sub)}</p>
-<ul class="checks">{"".join(checks)}</ul>
+<ul class="checks">{checks}</ul>
 <div class="stats"><div><b>{t["hosts"]}</b><span>destinations</span></div>
 <div><b>{t["requests"]}</b><span>requests</span></div>
 <div><b>{human_bytes(t["bytes_out"])}</b><span>uploaded</span></div>
 <div><b>{t.get("not_inspected", 0)}</b><span>not inspected</span></div>
 <div><b>{len(mine)}</b><span>new archives / blobs</span></div></div></div>
 
-{f'<div class="ctlbox"><b>{e(CONTROL_HEAD[ctl])}</b>{e(CONTROL_HELP[ctl])}</div>' if ctl != "ok" else ""}
-{"".join(f'<div class="warnbox">{e(w)}</div>' for w in s.get("warnings", []))}
+{f'<div class="notice"><b>{e(CONTROL_HEAD[ctl])}</b>{e(CONTROL_HELP[ctl])}</div>' if ctl != "ok" else ""}
+{"".join(f'<div class="notice">{e(w)}</div>' for w in s.get("warnings", []))}
 <section><h2>Canaries</h2>
 <p class="note">Fake, randomly generated markers planted in a throwaway project. Red means something no task needed left the machine.</p>
-{table(["Planted as", "File", "What happened"], canary_rows, "No canaries were planted.",
-       hide_sm={1}, wide=False)}
+{table(["Planted as", "File", "What happened"], canary_rows, "No canaries were planted.")}
 <details><summary>Command and prompt</summary><code>{e(" ".join(s["command"]))}</code>
 <code>{e(s.get("task_prompt", ""))}</code></details></section>
 
