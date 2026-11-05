@@ -1,0 +1,77 @@
+name: Bug report
+description: Report a crash, a wrong report, or a run that will not start
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a vulnerability here. See [SECURITY.md](https://github.com/sundaysebasidian-byte/whatsent/blob/main/SECURITY.md) for the scope and the private reporting route.
+
+        Before attaching anything from a run, read the privacy note at the end of this form.
+  - type: input
+    id: version
+    attributes:
+      label: whatsent version
+      description: Output of `whatsent --version`.
+      placeholder: whatsent 0.3.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version` in the environment that runs whatsent.
+      placeholder: "3.13.2"
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent or IDE and its version
+      description: For example `claude` 2.1.301, or Cursor 1.2.3 via `--app cursor`. Write "none" for `whatsent demo` or `whatsent ui` alone.
+      placeholder: claude 2.1.301
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact whatsent command line. Replace your own prompt text with a placeholder if you prefer.
+      render: shell
+      placeholder: whatsent run --clean -- claude -p "..." --permission-mode acceptEdits
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what you expected
+      description: Include the terminal output and any warning the report showed. If startup failed, the last lines before it stopped are the useful part.
+    validations:
+      required: true
+  - type: input
+    id: report_dir
+    attributes:
+      label: Report shape
+      description: Did the run produce `report.html`, and which sections were empty or wrong? Do not attach the report itself unless you have read the privacy note below.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I have not attached a raw capture, a CA private key, or a canary value from a run I care about.
+          required: true
+        - label: I understand that a full `report.json` or journal can contain local paths and command arguments, and that I should redact them.
+          required: true

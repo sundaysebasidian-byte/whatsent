@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/sundaysebasidian-byte/whatsent/security/advisories/new
+    about: Report privately through GitHub. Do not open a public issue for a vulnerability; read SECURITY.md first for the scope.
+  - name: Question about a report
+    url: https://github.com/sundaysebasidian-byte/whatsent#reading-the-report
+    about: What grey, red, amber and "Not inspected" mean, and why a run can be unconfirmed.

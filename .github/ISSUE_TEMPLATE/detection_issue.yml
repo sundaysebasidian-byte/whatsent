@@ -1,0 +1,114 @@
+name: Detection issue (false negative or false positive)
+description: A canary that left but was not reported, or a canary reported as sent when it was not
+labels: ["detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful kind of report: it says the measurement is wrong, not just the tool. Please minimise it.
+
+        **Never attach real secrets.** No API keys, tokens, cookies, `.env` values, customer data or raw captures from a real account. Canary values are random fakes and are safe, but a capture around them usually also holds your headers. Redact anything you are unsure about.
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Which way is the result wrong
+      options:
+        - False negative — the data left the machine but the report does not show it
+        - False positive — the report says a canary left but it did not
+        - Both, or the count is wrong in another way
+    validations:
+      required: true
+  - type: dropdown
+    id: canary
+    attributes:
+      label: Which canary
+      description: Pick the planted file the problem is about. `report.html` names it.
+      options:
+        - The task file (`src/app.py`, the positive control)
+        - The unrelated source file
+        - The gitignored `.env`
+        - The gitignored credentials file
+        - The file whose name is the marker
+        - The git commit message
+        - Several, or not sure
+    validations:
+      required: true
+  - type: textarea
+    id: encoding
+    attributes:
+      label: Encoding and transport
+      description: The part that matters most. Describe how the body was encoded or packed, and how it travelled. Say "unknown" where you could not tell.
+      placeholder: |
+        Body: gzip inside a zip, then base64 in a JSON field
+        Transport: HTTP/2 upload to a non-standard port
+        Proxy: honoured --proxy-server
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How the traffic reached the network
+      multiple: true
+      options:
+        - Honoured the proxy environment variables
+        - Honoured Chromium `--proxy-server` (IDE)
+        - OS-level capture (`--capture local`)
+        - Skipped the proxy (direct TCP or UDP/QUIC)
+        - Pinned certificate, host under "Not inspected"
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: whatsent version
+      placeholder: whatsent 0.3.1
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent or IDE and its version
+      placeholder: codex 0.164.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS, Python and capture mode
+      description: For example "macOS 15.3, Python 3.13.2, default proxy capture".
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How you know
+      description: For a false negative, how you saw the payload carry the canary (another proxy, `tcpdump`, server logs, the tool's own disk staging file). For a false positive, what showed the request did not contain it. Paste only redacted lines.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Redacted report excerpt
+      description: Paste the coverage warnings, the "Not inspected" rows and the row for this canary from `report.json`, with hostnames and paths replaced. Do not paste the whole report.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Smallest reproduction you can offer
+      description: A `whatsent demo` run that shows it, a synthetic body attached to a comment, or the steps that trigger it with the agent. A sample body is worth more than a video.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I have removed real secrets, auth headers, cookies and private file contents from everything I pasted.
+          required: true
+        - label: I understand that a full report or journal can hold local paths and command arguments, and I have redacted them.
+          required: true

@@ -1,0 +1,71 @@
+name: New agent or IDE support
+description: Ask for --clean switches for an agent, or for an IDE that whatsent should launch
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        whatsent supports a new agent in two separate ways, and a request usually needs only one of them. Running any CLI agent already works with `whatsent run -- <agent>`; this form is about the parts that need a name.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What should be added
+      multiple: true
+      options:
+        - A `--clean` mode for a CLI agent (turn off MCP servers, connectors, plugins)
+        - An IDE entry for `--app NAME` (resolve the bundle or binary automatically)
+        - Version detection for a CLI agent
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Agent or IDE
+      description: The command name, or the app name and where it installs.
+      placeholder: cursor-agent, or Zed
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version you tested
+      placeholder: 0.4.2
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: switches
+    attributes:
+      label: Switches that turn off MCP servers, connectors and plugins
+      description: For `--clean`, quote the documented flag or environment variable and the command it was verified with. If the agent has no such switch, say so; whatsent then prints that it cannot clean the run.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: install
+    attributes:
+      label: Install paths and launch behaviour
+      description: For `--app`, give the bundle name on macOS, the executable name on Linux, or the path under `%LOCALAPPDATA%\Programs` or `%ProgramFiles%` on Windows. Note whether a second launch is handed to the running copy, and whether the app is Electron-based.
+    validations:
+      required: false
+  - type: checkboxes
+    id: tested
+    attributes:
+      label: Testing
+      options:
+        - label: I can run the agent against `whatsent demo` or a real canary project and report what the proxy saw.
+          required: false
+        - label: I have checked that the switches above do not change what the agent itself uploads, only the servers and plugins it would start.
+          required: false
