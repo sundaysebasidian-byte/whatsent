@@ -2,13 +2,19 @@
 
 **看清你的 AI 编程 Agent 把什么数据发到了哪里。** 一条命令：让任意 Agent（命令行或 IDE）在一个埋满假密钥的临时项目里干活，同时记录它的网络流量和留在本地的文件，最后生成一页报告，告诉你哪些东西离开了你的电脑。
 
-![whatsent 报告：6 个金丝雀里有 3 个离开了本机，其中包括 .env 密钥](docs/report.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
+  <img alt="whatsent 回放一个模拟 Agent：请求和金丝雀实时出现，最后生成报告：6 个标记里有 3 个离开了本机，其中包括 .env 密钥" src="docs/demo.gif" width="880">
+</picture>
 
-<sub>上图来自 `whatsent demo`：一个模拟 Agent 对接本地假服务端，不是任何真实产品。</sub>
+**[在线演示](https://sundaysebasidian-byte.github.io/whatsent/demo/)** · [测评榜](https://sundaysebasidian-byte.github.io/whatsent/) · [示例报告](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html) · [检测准确性](docs/ACCURACY.md) · [English](README.md)
+
+<sub>录自 `whatsent demo`：一个模拟 Agent 对接本地假服务端，不是任何真实产品。</sub>
 
 ```bash
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent   # 或：uv tool install git+https://...
 whatsent demo                  # 10 秒离线演示，不需要装 Agent
+whatsent selftest              # 离线检测自检，不到一秒
 whatsent ui                    # 本地网页界面：选工具、实时看它发了什么
 whatsent run -- claude         # 命令行 Agent
 whatsent run --app cursor      # IDE 类 Agent
@@ -25,8 +31,6 @@ whatsent run -- claude
 whatsent run --app cursor
 ```
 
-[English](README.md) · [测评榜](https://sundaysebasidian-byte.github.io/whatsent/) · [示例报告](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html)
-
 ## 为什么做这个
 
 编程 Agent 能读到整个项目。它发出去的大部分内容是你让它处理的代码，这是正常的。问题在于还顺带发了什么：`.env`、被 gitignore 的凭据、git 历史、你根本没提过的文件，甚至整个工作区的打包快照。厂商的隐私说明讲的是意图，whatsent 看的是实际行为。
@@ -36,10 +40,14 @@ whatsent 是审计工具，不是防火墙，不拦截任何东西。
 ## 原理
 
 1. **金丝雀项目**：自动生成一个小型假项目，每个文件里埋一个唯一的随机标记：任务相关文件、无关源文件、被 gitignore 的 `.env`、被 gitignore 的凭据文件、一个"文件名本身就是标记"的文件、一条 git 提交信息。所有值都明显是假的，每次运行都重新生成。
-2. **抓包**：在本地启动 [mitmproxy](https://mitmproxy.org)，让 Agent 走这个代理并信任本次运行专用的 CA 证书，从而读取 HTTPS 请求。每个请求都会搜索标记，包括 gzip、zstd、URL 编码、base64、zip/tar，以及 gRPC/Connect 里压缩过的消息。
+2. **抓包**：在本地启动 [mitmproxy](https://mitmproxy.org)，让 Agent 走这个代理并信任本次运行专用的 CA 证书，从而读取 HTTPS 请求。每个请求、流式上传和 WebSocket 连接都会搜索标记，最多解开四层编码：URL、base64/base64url、hex、UTF-16、JSON 转义、gzip、zstd、zlib/deflate、Brotli、zip/tar 以及 gRPC/Connect 分帧，也包括 base64 包着 gzip 这类组合。标记被拆到多条 WebSocket 消息里同样能找到。
 3. **落盘监控**：运行前后各给 Agent 的缓存和配置目录拍一次快照。对上传内容加密的工具通常会先在本地生成打包文件，whatsent 会列出新出现的压缩包和大文件，并在里面搜索标记。
 4. **绕过检测**：运行期间采样 Agent 打开的网络连接，绕开代理的连接（TCP 或 UDP/QUIC）会标为"未能检查"，而不是被当成干净。
 5. **报告**：在 `./whatsent-report/<时间>/` 下生成单文件 `report.html`，附 `report.json` 和可公开分享的 `result.json`。报告里你的用户目录显示为 `~`。
+
+## 检测准确性
+
+`whatsent selftest` 把标记经过每一种支持的编码和容器埋进数据里，逐一检查能否找到；同时用一组反例（随机字节、只差一个字符的标记、其他运行的标记）检查有没有误报。它离线运行、不到一秒，CI 里每次都跑；当前结果见 [docs/ACCURACY.md](docs/ACCURACY.md)：1,611 个用例，无漏报、无误报。它检验的是检测器本身，不代表某个 Agent 的流量都被抓到了；那由每份报告里的任务文件检查负责。
 
 ## 用法
 
@@ -142,7 +150,7 @@ whatsent run --app trae --capture local:Trae
 信任边界、报告隐私和当前依赖安全公告见 [SECURITY.md](SECURITY.md)。
 
 - HTTP 请求读取完毕就记录外发数据，不必等待流式响应结束；记录到上传不代表远端已存储或处理。
-- 解码及归档展开采用 200 MiB 输出预算、两层嵌套、每包 4,096 个条目和每种格式 64 个嵌入压缩流的上限。达到网络解码上限或缺少解码能力时标为未能检查；旧 Brotli 库若不支持有界解码，也会明确标出。
+- 解码及归档展开采用 200 MiB 输出预算、四层嵌套、每包 4,096 个条目、每段数据 64 个 base64 候选或嵌入压缩流的上限。WebSocket 重组每个连接只保留一个标记长度的重叠，所以被拆到多条消息里的压缩容器无法解开。达到网络解码上限或缺少解码能力时标为未能检查；旧 Brotli 库若不支持有界解码，也会明确标出。
 - gzip 和 zstd 会继续扫描后续压缩帧，且共用输出上限；zstd 历史缓冲区限制为 128 MiB。损坏流及不支持的 7z 会明确标出。较旧的 `zstandard` 后端不能验证有界多帧、未知大小或空帧读取的完整性，即使发现部分标记也仍标为未能完整检查。
 - 采集日志缺失、无法读取或损坏时，保留有效记录并显示覆盖警告。CA 私钥删除失败会在终端和报告中提示；此时应保密保存该运行目录。
 - 抓包中断、套接字访问被拒和磁盘扫描不完整都会显示警告；带警告的榜单结果不会判为干净。任务标记可见只能确认该标记被捕获，不能证明所有流量都已捕获。

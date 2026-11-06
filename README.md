@@ -2,13 +2,19 @@
 
 **See what your AI coding agent sends, and where.** One command runs any agent, CLI or IDE, inside a throwaway project full of fake secrets, records its traffic and the files it leaves behind, and gives you a one-page report of what left your machine.
 
-![A whatsent report: 3 of 6 canaries left this machine, including the .env secret](docs/report.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
+  <img alt="whatsent replaying a simulated agent: requests and canaries arrive live, then the report: 3 of 6 markers left this computer, including the .env secret" src="docs/demo.gif" width="880">
+</picture>
 
-<sub>Report from `whatsent demo`, which runs a simulated agent against local servers. Not a real product.</sub>
+**[Live demo](https://sundaysebasidian-byte.github.io/whatsent/demo/)** · [Leaderboard](https://sundaysebasidian-byte.github.io/whatsent/) · [Sample report](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html) · [Detection accuracy](docs/ACCURACY.md) · [中文说明](README_zh.md)
+
+<sub>Recorded from `whatsent demo`, which runs a simulated agent against local servers. Not a real product.</sub>
 
 ```bash
 pipx install git+https://github.com/sundaysebasidian-byte/whatsent   # or: uv tool install git+https://...
 whatsent demo                  # 10-second offline demo, no agent needed
+whatsent selftest              # offline detection check, under a second
 whatsent ui                    # the same, in a local web app: pick a tool, watch it live
 whatsent run -- claude         # a CLI agent
 whatsent run --app cursor      # an IDE agent
@@ -25,8 +31,6 @@ whatsent run -- claude
 whatsent run --app cursor
 ```
 
-[中文说明](README_zh.md) · [Leaderboard](https://sundaysebasidian-byte.github.io/whatsent/) · [Sample report](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html)
-
 ## Why
 
 Coding agents read your whole project. Most of what they send is the code you asked them to work on, which is expected. The question is what else goes along: your `.env`, gitignored credentials, git history, files you never mentioned, or a packed snapshot of the entire workspace. Vendor privacy pages describe intent; whatsent shows behaviour.
@@ -36,10 +40,14 @@ whatsent is an audit tool, not a firewall. It does not block anything.
 ## How it works
 
 1. **Canary project.** whatsent creates a small fake project and plants a unique random marker in each file: the file the task is about, an unrelated source file, a gitignored `.env`, a gitignored credentials file, a file whose *name* is the marker, and a git commit message. All values are obviously fake and new on every run.
-2. **Traffic capture.** It starts a local [mitmproxy](https://mitmproxy.org) and points the agent at it with a per-run CA certificate, so HTTPS requests can be read. Every request is searched for the markers, including gzip, zstd, URL-encoded, base64, zip/tar payloads and compressed gRPC/Connect messages.
+2. **Traffic capture.** It starts a local [mitmproxy](https://mitmproxy.org) and points the agent at it with a per-run CA certificate, so HTTPS requests can be read. Every request, streamed upload and WebSocket connection is searched for the markers, through up to four layers of encoding: URL, base64/base64url, hex, UTF-16, JSON escapes, gzip, zstd, zlib/deflate, Brotli, zip/tar and gRPC/Connect framing, including combinations such as base64-wrapped gzip. A marker split across WebSocket messages is still found.
 3. **Disk watch.** It snapshots the agent's cache and config folders before and after the run. Tools that encrypt their uploads usually stage them on disk first; whatsent lists new archives and large blobs and searches them for markers.
 4. **Bypass check.** It samples the agent's open sockets during the run, so a connection that skips the proxy (TCP or UDP/QUIC) shows up as "not inspected" instead of silently looking clean.
 5. **Report.** A single `report.html` (plus `report.json` and a shareable `result.json`) in `./whatsent-report/<timestamp>/`. Your home folder is shown as `~`.
+
+## Detection accuracy
+
+`whatsent selftest` plants markers through every supported encoding and container, and checks a negative corpus (random bytes, markers off by one character, other runs' markers) for false positives. It runs offline in under a second and in CI; the current matrix is in [docs/ACCURACY.md](docs/ACCURACY.md): 1,611 cases, no misses, no false positives. It tests the detector, not whether a given agent's traffic was captured; that is what the task-file check in each report is for.
 
 ## Usage
 
@@ -146,7 +154,7 @@ See [SECURITY.md](SECURITY.md) for the trust boundary, report privacy and curren
 - `--capture local` has not yet been tested on a real Mac or Windows PC; the Linux path needs root and eBPF.
 - Windows support is tested in CI (the demo and the stand-in IDE), not yet with real agents. The Windows install paths of the IDEs are best guesses; if `--app NAME` does not find yours, pass the `.exe` path.
 - HTTP uploads are journaled when the request is read, even if its response never finishes. A captured upload is not proof that the remote server stored or processed it.
-- Decoding and archive expansion have a 200 MiB output budget, two nested expansion levels, 4,096 entries per archive and 64 embedded streams of each type per blob. Network decoding limits or unavailable codecs are reported as uninspected; opaque application encryption remains unreadable. On older Brotli builds without bounded decoding, Brotli bodies are flagged as uninspected.
+- Decoding and archive expansion have a 200 MiB output budget, four nested levels, 4,096 entries per archive and 64 base64 candidates or embedded streams per blob. WebSocket reassembly keeps only a marker-sized overlap per connection, so a compressed container split across messages is not decoded. Network decoding limits or unavailable codecs are reported as uninspected; opaque application encryption remains unreadable. On older Brotli builds without bounded decoding, Brotli bodies are flagged as uninspected.
 - Gzip and zstd members are scanned beyond the first frame, within shared output limits; zstd history is capped at 128 MiB. Damaged streams and unsupported 7z archives are flagged. The older `zstandard` backend cannot verify completeness of bounded multi-frame, unknown-size or empty-frame reads, so these remain uninspected even when some markers are found.
 - Missing, unreadable or damaged capture journals produce a coverage warning while preserving valid records. CA-key removal failures are reported in the terminal and report; keep the affected run directory private.
 - Capture failures, inaccessible sockets and partial disk scans produce warnings; rows with warnings are never classified as clean. A task-file positive control confirms only that this marker was visible, not that all traffic was captured.
