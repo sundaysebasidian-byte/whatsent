@@ -109,8 +109,19 @@ def _base64_runs(blob: bytes) -> Iterator[tuple[int, int]]:
         pos = end
 
 
+def _cut_by_escaped_slash(blob: bytes, start: int, stop: int) -> bool:
+    """True when a JSON ``\\/`` escape (possibly nested, ``\\\\\\/``) borders this base64 run."""
+    after = stop
+    while blob[after:after + 1] == b"\\":
+        after += 1
+    if after > stop and blob[after:after + 1] == b"/":
+        return True
+    return blob[start:start + 1] == b"/" and blob[start - 1:start] == b"\\" and start > 0
+
+
 def _text_decodings(blob: bytes, budget: list[int], issues: list[str] | None,
                     min_token_bytes: int) -> Iterator[bytes]:
+    unescaped_upto = 0  # the JSON-unescaped copy, when one was produced, covers blob[:unescaped_upto]
     if (b"%" in blob or JSON_ESCAPE.search(blob)) and _is_text(blob):
         # Both transforms only shrink input. Bound allocation before invoking them.
         prefix = blob[:budget[0]]
@@ -121,11 +132,14 @@ def _text_decodings(blob: bytes, budget: list[int], issues: list[str] | None,
             if decoded != prefix:
                 yield decoded
         if JSON_ESCAPE.search(prefix):
+            unescaped_upto = len(prefix)
             yield JSON_ESCAPE.sub(lambda m: bytes([int(m[1], 16)]) if m[1] else m[2], prefix[:budget[0]])
     candidates = 0
     for start, stop in _base64_runs(blob):
         if budget[0] <= 0:
             break
+        if stop < unescaped_upto and _cut_by_escaped_slash(blob, start, stop):
+            continue  # a fragment; the JSON-unescaped form above holds the whole run
         # Include line separators in this bound: joining must not allocate an unbounded copy.
         end = min(stop, start + (budget[0] // 3) * 4)
         if end < stop:

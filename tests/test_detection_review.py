@@ -39,17 +39,19 @@ def test_wrapped_base64_shares_output_budget(monkeypatch):
     assert sum(map(len, blobs[1:])) <= 80 and issues
 
 
+from whatsent.selftest import _base64_gzip_with_slash  # noqa: E402
+
+
 @pytest.mark.parametrize('escape', [lambda b: b.replace(b'/', b'\\/'),
                                    lambda b: b.replace(b'/', b'\\u002f')])
 def test_json_escaped_base64_gzip(escape):
-    encoded = base64.b64encode(gzip.compress(b'x' * 200 + TOKEN.encode() + b'tail', mtime=0))
-    assert b'/' in encoded
+    encoded = _base64_gzip_with_slash(TOKEN.encode())
     assert detect.Matcher({'x': TOKEN}).scan(b'{"blob":"' + escape(encoded) + b'"}') == {'x'}
 
 
 def test_json_escaped_backslash_then_slash():
     # The outer JSON string contains another JSON string with an escaped slash.
-    encoded = base64.b64encode(gzip.compress(b'x' * 200 + TOKEN.encode() + b'tail', mtime=0))
+    encoded = _base64_gzip_with_slash(TOKEN.encode())
     inner = '{"blob":"' + encoded.decode().replace('/', '\\/') + '"}'
     data = json.dumps({'nested': inner}).encode()
     assert b'\\\\/' in data
@@ -159,3 +161,17 @@ def test_sniffed_zlib_errors_are_distinct_from_declared_http_deflate():
     assert not issues
     detect.decode_body(blob, 'deflate', issues)
     assert issues
+
+
+def test_escaped_slash_fragments_do_not_report_gaps():
+    encoded = _base64_gzip_with_slash(TOKEN.encode())
+    issues = []
+    data = b'{"blob":"' + encoded.replace(b'/', b'\\/') + b'"}'
+    assert detect.Matcher({'x': TOKEN}).scan(data, issues=issues) == {'x'}
+    assert issues == []
+
+
+def test_binary_blob_with_escaped_slash_keeps_its_base64_runs():
+    encoded = base64.b64encode(b'x' * 7 + TOKEN.encode())
+    data = b'\x00\xff' + encoded + b'\\/'
+    assert detect.Matcher({'x': TOKEN}).scan(data) == {'x'}

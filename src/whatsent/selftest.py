@@ -108,6 +108,15 @@ def encoded_cases(data: bytes, expected: frozenset[str]):
     yield Case('websocket-split', tuple(data[i:i + 3] for i in range(0, len(data), 3)), expected)
 
 
+
+def _base64_gzip_with_slash(token: bytes) -> bytes:
+    """base64(gzip(...)) that contains '/', whatever zlib build compressed it."""
+    for pad in range(200, 456):
+        encoded = base64.b64encode(gzip.compress(b'x' * pad + token + b'tail', mtime=0))
+        if b'/' in encoded:
+            return encoded
+    raise RuntimeError('no base64 gzip payload with a slash')
+
 def corpus():
     expected = frozenset(TOKENS)
     payload = ('KEY=' + ' '.join(TOKENS.values()) + '\n').encode()
@@ -127,8 +136,7 @@ def corpus():
                 encoded = base64.b64encode(b'x' * offset + payload + b'suffix')
                 wrapped = newline.join(encoded[i:i + width] for i in range(0, len(encoded), width))
                 yield Case(f'base64 wrapped {width} columns', wrapped, expected)
-    encoded = base64.b64encode(gzip.compress(b'x' * 200 + token + b'tail', mtime=0))
-    assert b'/' in encoded
+    encoded = _base64_gzip_with_slash(token)
     escaped = encoded.replace(b'/', b'\\/')
     yield Case('JSON slash-escaped base64(gzip)', b'{"blob":"' + escaped + b'"}', frozenset({'task_file'}))
     inner = '{"blob":"' + escaped.decode() + '"}'
