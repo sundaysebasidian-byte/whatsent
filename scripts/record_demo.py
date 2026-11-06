@@ -15,10 +15,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -32,15 +34,22 @@ MAX_WAIT_MS = 1500  # longest idle stretch kept between the last request and the
 def start_server(out: Path) -> tuple[subprocess.Popen, str]:
     proc = subprocess.Popen([sys.executable, "-m", "whatsent", "ui", "--no-browser", "--out", str(out)],
                             stderr=subprocess.PIPE, text=True, cwd=ROOT)
+    lines: queue.Queue[str] = queue.Queue()
+    # readline() blocks, so read on a thread and wait on the queue with the deadline.
+    threading.Thread(target=lambda: [lines.put(line) for line in proc.stderr], daemon=True).start()
     deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        line = proc.stderr.readline()
+    while (left := deadline - time.monotonic()) > 0:
+        try:
+            line = lines.get(timeout=min(left, 0.5))
+        except queue.Empty:
+            if proc.poll() is not None:
+                break
+            continue
         match = re.search(r"http://127\.0\.0\.1:\d+/", line)
         if match:
             return proc, match.group(0)
-        if proc.poll() is not None:
-            break
     proc.kill()
+    proc.wait()
     raise SystemExit("record_demo: whatsent ui did not start")
 
 

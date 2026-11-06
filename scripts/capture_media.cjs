@@ -16,15 +16,16 @@ const http = require('http');
 const { execFileSync } = require('child_process');
 const { chromium } = require('playwright');
 
-const [site, out = path.join(__dirname, '..', 'docs')] = process.argv.slice(2);
-if (!site) { console.error('usage: node scripts/capture_media.cjs SITE_DIR [OUT_DIR]'); process.exit(2); }
+const [siteArg, out = path.join(__dirname, '..', 'docs')] = process.argv.slice(2);
+if (!siteArg) { console.error('usage: node scripts/capture_media.cjs SITE_DIR [OUT_DIR]'); process.exit(2); }
+const site = path.resolve(siteArg);
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const server = http.createServer((req, res) => {
   let rel = decodeURIComponent(req.url.split('?')[0]);
   if (rel.endsWith('/')) rel += 'index.html';
   const file = path.join(site, rel);
-  if (!file.startsWith(path.resolve(site)) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
+  if (!file.startsWith(site + path.sep) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' }).end(fs.readFileSync(file));
 });
 
