@@ -75,7 +75,10 @@ def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict |
     for ev in events:
         if ev.get("undecoded"):
             # Matching still ran on the raw bytes, but a body we could not decode may hide a canary.
-            entry = undecoded.setdefault(ev["host"], {"host": ev["host"], "encoding": ev["undecoded"], "count": 0})
+            entry = undecoded.setdefault(ev["host"], {"host": ev["host"], "encoding": "", "count": 0})
+            reasons = entry["encoding"].split("; ") if entry["encoding"] else []
+            if ev["undecoded"] not in reasons:
+                entry["encoding"] = "; ".join([*reasons, ev["undecoded"]])
             entry["count"] += 1
         if ev["type"] == "tls_failed":
             key = f"{ev.get('host')}:{ev.get('port')}"
@@ -483,7 +486,7 @@ def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
                  "rejected whatsent's certificate (pinning or own trust store)", str(g["count"])]
                 for g in ni["tls_failed"]]
     gap_rows += [[f"<code>{e(str(g['host']))}</code>",
-                  f"request body in <code>{e(str(g['encoding']))}</code> encoding could not be decoded", str(g["count"])]
+                  f"request body not fully inspected: <code>{e(str(g['encoding']))}</code>", str(g["count"])]
                  for g in ni.get("undecoded", [])]
     for c in ni["direct_connections"]:
         if c.get("proto") == "udp":

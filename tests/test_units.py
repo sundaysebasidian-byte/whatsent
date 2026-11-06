@@ -132,3 +132,17 @@ def test_undecoded_bodies_count_as_not_inspected():
     s = report.summarize(meta, canaries, events, None, [])
     assert s["totals"]["not_inspected"] == 1
     assert s["not_inspected"]["undecoded"] == [{"host": "api.example.com", "encoding": "x-custom", "count": 1}]
+
+
+def test_summary_keeps_every_decoding_gap_per_host():
+    from whatsent.report import summarize
+
+    events = [
+        {"type": "http", "host": "h.test", "undecoded": "gzip stream not fully decoded", "canaries": []},
+        {"type": "http", "host": "h.test", "undecoded": "capture body limit reached", "canaries": []},
+        {"type": "http", "host": "h.test", "undecoded": "gzip stream not fully decoded", "canaries": []},
+    ]
+    s = summarize({}, [], events, None, [])
+    (entry,) = s["not_inspected"]["undecoded"]
+    assert entry["count"] == 3
+    assert entry["encoding"] == "gzip stream not fully decoded; capture body limit reached"
