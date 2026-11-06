@@ -17,12 +17,15 @@ MAX_EXPANDED = 200 * 1024 * 1024  # stop unpacking past this many bytes in total
 MAX_WINDOW = 128 * 1024 * 1024  # zstd history buffer, separate from the returned output limit
 MAX_MEMBERS = 4096  # archive entries, including empty files
 MAX_EMBEDDED = 64  # compressed streams to try per blob when they do not start at byte 0
+MAX_BASE64_CANDIDATES = 4096  # plausible candidates per blob, separate from embedded streams
 GZIP_MAGIC = b"\x1f\x8b\x08"
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
 BASE64_RUN = re.compile(rb"[A-Za-z0-9+/_-]{16,}+={0,2}")
-JSON_BYTE = re.compile(rb"\\u00([0-9a-fA-F]{2})")
+JSON_ESCAPE = re.compile(rb"\\(?:u00([0-9a-fA-F]{2})|([\\/]))")
+BINARY_CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+BASE64_LINE = re.compile(rb"[A-Za-z0-9+/_-]++={0,2}")
 
 
 class Matcher:
@@ -33,12 +36,13 @@ class Matcher:
                   tok.encode().hex().encode(), tok.encode().hex().upper().encode()]
             for cid, tok in tokens.items()
         }
+        self.min_token_bytes = min((len(tok.encode()) for tok in tokens.values()), default=1)
         # JSON escaping is the longest supported textual spelling (six bytes per byte).
         self.overlap = max((len(tok.encode()) * 6 for tok in tokens.values()), default=1) - 1
 
     def scan(self, data: bytes, *, issues: list[str] | None = None) -> set[str]:
         hits = set()
-        for blob in expand(data, issues=issues):
+        for blob in expand(data, issues=issues, min_token_bytes=self.min_token_bytes):
             for cid, pats in self.patterns.items():
                 if cid not in hits and any(p in blob for p in pats):
                     hits.add(cid)
@@ -66,8 +70,48 @@ class StreamMatcher:
         return hits
 
 
-def _text_decodings(blob: bytes, budget: list[int], issues: list[str] | None) -> Iterator[bytes]:
-    if b"%" in blob or JSON_BYTE.search(blob):
+def _is_text(blob: bytes) -> bool:
+    if BINARY_CONTROL.search(blob):
+        return False
+    if not blob.isascii():
+        try:
+            blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+    return True
+
+
+def _base64_runs(blob: bytes) -> Iterator[tuple[int, int]]:
+    pos = 0
+    while match := BASE64_RUN.search(blob, pos):
+        start, end = match.span()
+        width = end - start
+        # MIME/PEM wraps complete quartets. Only join adjacent full lines, never JSON fields.
+        if width in (64, 76) and (start == 0 or blob[start - 1] == 10):
+            line = match
+            while blob[line.end() - 1:line.end()] != b"=":
+                next_start = line.end()
+                if blob[next_start:next_start + 2] == b"\r\n":
+                    next_start += 2
+                elif blob[next_start:next_start + 1] == b"\n":
+                    next_start += 1
+                else:
+                    break
+                following = BASE64_LINE.match(blob, next_start)
+                if (following is None or following.end() - next_start > width
+                        or blob[following.end():following.end() + 1] not in (b"", b"\r", b"\n")):
+                    break
+                end = following.end()
+                line = following
+                if end - next_start != width:
+                    break
+        yield start, end
+        pos = end
+
+
+def _text_decodings(blob: bytes, budget: list[int], issues: list[str] | None,
+                    min_token_bytes: int) -> Iterator[bytes]:
+    if (b"%" in blob or JSON_ESCAPE.search(blob)) and _is_text(blob):
         # Both transforms only shrink input. Bound allocation before invoking them.
         prefix = blob[:budget[0]]
         if len(prefix) < len(blob):
@@ -76,32 +120,40 @@ def _text_decodings(blob: bytes, budget: list[int], issues: list[str] | None) ->
             decoded = unquote_to_bytes(prefix)
             if decoded != prefix:
                 yield decoded
-        if JSON_BYTE.search(prefix):
-            yield JSON_BYTE.sub(lambda m: bytes([int(m[1], 16)]), prefix[:budget[0]])
-    for i, match in enumerate(BASE64_RUN.finditer(blob)):
-        if i >= MAX_EMBEDDED:
-            _issue(issues, "base64 candidate limit reached")
+        if JSON_ESCAPE.search(prefix):
+            yield JSON_ESCAPE.sub(lambda m: bytes([int(m[1], 16)]) if m[1] else m[2], prefix[:budget[0]])
+    candidates = 0
+    for start, stop in _base64_runs(blob):
+        if budget[0] <= 0:
             break
-        # Decode at most the remaining budget, without copying an unbounded run.
-        end = min(match.end(), match.start() + (budget[0] // 3) * 4)
-        if end < match.end():
+        # Include line separators in this bound: joining must not allocate an unbounded copy.
+        end = min(stop, start + (budget[0] // 3) * 4)
+        if end < stop:
             _issue(issues, "base64 expanded data limit reached")
-        encoded = blob[match.start():end]
+        encoded = blob[start:end].translate(None, b"\r\n")
         if not encoded:
             break
         try:
-            yield base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
+            decoded = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
         except binascii.Error:
             # A split stream may end with one sextet; retain its complete quartets.
             # Ordinary alphanumeric text can also land here, so only decode, never infer a hit.
             prefix = encoded[:len(encoded) // 4 * 4]
             try:
-                yield base64.b64decode(prefix, altchars=b"-_", validate=True)
+                decoded = base64.b64decode(prefix, altchars=b"-_", validate=True)
             except binascii.Error:
                 continue
+        if len(decoded) < min_token_bytes and not (looks_like_archive(decoded) or _is_zlib(decoded)):
+            continue
+        if candidates >= MAX_BASE64_CANDIDATES:
+            _issue(issues, "base64 candidate limit reached")
+            break
+        candidates += 1
+        yield decoded
 
 
-def expand(data: bytes, depth: int = 4, *, issues: list[str] | None = None) -> list[bytes]:
+def expand(data: bytes, depth: int = 4, *, issues: list[str] | None = None,
+           min_token_bytes: int = 1) -> list[bytes]:
     """Unpack lazily with one shared output budget, including nested archives."""
     out = [data]
     budget = [MAX_EXPANDED]
@@ -109,11 +161,11 @@ def expand(data: bytes, depth: int = 4, *, issues: list[str] | None = None) -> l
     def walk(blob: bytes, level: int) -> None:
         if level == 0:
             if (looks_like_archive(blob) or _is_zlib(blob) or BASE64_RUN.search(blob)
-                    or JSON_BYTE.search(blob) or b"%" in blob
+                    or JSON_ESCAPE.search(blob) or b"%" in blob
                     or GZIP_MAGIC in blob or ZSTD_MAGIC in blob):
                 _issue(issues, "decoding nesting limit reached")
             return
-        for child in _children(blob, budget, issues):
+        for child in _children(blob, budget, issues, min_token_bytes):
             budget[0] -= len(child)
             if child:
                 out.append(child)
@@ -128,10 +180,10 @@ def expand(data: bytes, depth: int = 4, *, issues: list[str] | None = None) -> l
     return out
 
 
-def _children(blob: bytes, budget: list[int], issues: list[str] | None) -> Iterator[bytes]:
+def _children(blob: bytes, budget: list[int], issues: list[str] | None, min_token_bytes: int) -> Iterator[bytes]:
     yield from _unpack(blob, budget, issues)
     if budget[0] > 0:
-        yield from _text_decodings(blob, budget, issues)
+        yield from _text_decodings(blob, budget, issues, min_token_bytes)
 
 
 def _issue(issues: list[str] | None, message: str) -> None:
@@ -159,6 +211,8 @@ def _decode_frames(blob: bytes, factory, limit: int, magic: bytes | None, label:
                    issues: list[str] | None, allow_trailing: bool = False,
                    errors: tuple[type[Exception], ...] = (zlib.error, ValueError)) -> bytes:
     """Both zlib and stdlib zstd expose bounded output, EOF and unused input."""
+    # Only the zlib label is a two-byte heuristic; declared HTTP deflate uses its own label.
+    probe = label == "zlib"
     out = bytearray()
     for _ in range(MAX_MEMBERS):
         if len(out) >= limit:
@@ -168,10 +222,12 @@ def _decode_frames(blob: bytes, factory, limit: int, magic: bytes | None, label:
         try:
             out.extend(decoder.decompress(blob, max_length=limit - len(out)))
         except errors:
-            _issue(issues, f"{label} stream could not be decoded")
+            if not probe:
+                _issue(issues, f"{label} stream could not be decoded")
             break
         if not decoder.eof:
-            _issue(issues, f"{label} stream not fully decoded")
+            if not probe or out:
+                _issue(issues, f"{label} stream not fully decoded")
             break
         blob = decoder.unused_data
         if not blob:
@@ -197,6 +253,8 @@ def _gunzip_prefix(blob: bytes, limit: int | None = None, *, issues: list[str] |
 
 def decode_body(data: bytes, encoding: str, issues: list[str], *, limit: int | None = None) -> bytes:
     """Bound HTTP content decoding as well as the archive expansion that follows it."""
+    if not data:
+        return data
     limit = MAX_EXPANDED if limit is None else limit
     encoding = encoding.strip().lower()
     if "," in encoding:
@@ -253,7 +311,19 @@ def decode_body(data: bytes, encoding: str, issues: list[str], *, limit: int | N
 
 
 def decode_framed(data: bytes, encoding: str, issues: list[str]) -> bytes:
-    """gRPC/Connect envelopes: decoding needs the request's message encoding header."""
+    """gRPC/Connect envelopes, including base64 gRPC-web-text; use the message encoding header."""
+    # A binary envelope's flags cannot be an ASCII base64 character.
+    if data and data[0] & ~0x83:
+        end = min(len(data), (MAX_EXPANDED // 3) * 4)
+        encoded = data[:end].translate(None, b" \t\r\n")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except binascii.Error:
+            pass  # The envelope parser reports the malformed body below.
+        else:
+            if end < len(data):
+                _issue(issues, "RPC text expanded data limit reached")
+            data = decoded
     out = bytearray()
     pos = 0
     for _ in range(MAX_MEMBERS):
@@ -335,6 +405,11 @@ def _unpack(blob: bytes, budget: list[int], issues: list[str] | None) -> Iterato
         elif _is_zlib(blob):
             yield _decode_frames(blob, zlib.decompressobj, budget[0], None, "zlib", issues)
         elif blob[:4] == b"PK\x03\x04":
+            # Reuse the stdlib's bounded EOCD/ZIP64 reader before ZipFile allocates ZipInfo objects.
+            endrec = zipfile._EndRecData(io.BytesIO(blob))
+            if endrec and endrec[zipfile._ECD_ENTRIES_TOTAL] > MAX_MEMBERS:
+                _issue(issues, "archive entry limit reached")
+                return
             with zipfile.ZipFile(io.BytesIO(blob)) as zf:
                 for i, info in enumerate(zf.infolist()):
                     if i >= MAX_MEMBERS:

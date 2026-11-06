@@ -208,3 +208,32 @@ def test_stream_state_remains_compatible_with_flow_saving(recorder):
     upload.request.raw_content = None
     rec.request(upload)
     FlowWriter(io.BytesIO()).add(upload)
+
+
+@pytest.mark.parametrize('content_type', ['application/grpc-web-text', 'application/grpc-web-text+proto'])
+@pytest.mark.parametrize('compressed', [False, True])
+def test_grpc_web_text_decoded_before_envelope(recorder, content_type, compressed):
+    import base64
+    import gzip
+
+    rec, read = recorder
+    payload = gzip.compress(TOKEN.encode(), mtime=0) if compressed else TOKEN.encode()
+    frame = bytes([int(compressed)]) + len(payload).to_bytes(4, 'big') + payload
+    flow = post(base64.b64encode(frame), None)
+    flow.request.headers['content-type'] = content_type + '; charset=utf-8'
+    if compressed:
+        flow.request.headers['grpc-encoding'] = 'gzip'
+    rec.request(flow)
+    (event,) = read()
+    assert event['canaries'] == ['task_file']
+    assert not event['undecoded']
+
+
+def test_invalid_grpc_web_text_remains_uninspected(recorder):
+    import base64
+
+    rec, read = recorder
+    flow = post(base64.b64encode(b'not an envelope'), None)
+    flow.request.headers['content-type'] = 'application/grpc-web-text'
+    rec.request(flow)
+    assert 'RPC frame' in read()[0]['undecoded']

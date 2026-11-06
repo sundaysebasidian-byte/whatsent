@@ -47,7 +47,7 @@ whatsent is an audit tool, not a firewall. It does not block anything.
 
 ## Detection accuracy
 
-`whatsent selftest` plants markers through every supported encoding and container, and checks a negative corpus (random bytes, markers off by one character, other runs' markers) for false positives. It runs offline in under a second and in CI; the current matrix is in [docs/ACCURACY.md](docs/ACCURACY.md): 1,611 cases, no misses, no false positives. It tests the detector, not whether a given agent's traffic was captured; that is what the task-file check in each report is for.
+`whatsent selftest` plants markers through every supported encoding and container, and checks a negative corpus (random bytes, markers off by one character, other runs' markers) for false positives. It runs offline in under a second and in CI; the current matrix is in [docs/ACCURACY.md](docs/ACCURACY.md): 1,906 cases, no misses, no false positives. It tests the detector, not whether a given agent's traffic was captured; that is what the task-file check in each report is for.
 
 ## Usage
 
@@ -154,7 +154,8 @@ See [SECURITY.md](SECURITY.md) for the trust boundary, report privacy and curren
 - `--capture local` has not yet been tested on a real Mac or Windows PC; the Linux path needs root and eBPF.
 - Windows support is tested in CI (the demo and the stand-in IDE), not yet with real agents. The Windows install paths of the IDEs are best guesses; if `--app NAME` does not find yours, pass the `.exe` path.
 - HTTP uploads are journaled when the request is read, even if its response never finishes. A captured upload is not proof that the remote server stored or processed it.
-- Decoding and archive expansion have a 200 MiB output budget, four nested levels, 4,096 entries per archive and 64 base64 candidates or embedded streams per blob. WebSocket reassembly keeps only a marker-sized overlap per connection, so a compressed container split across messages is not decoded. Network decoding limits or unavailable codecs are reported as uninspected; opaque application encryption remains unreadable. On older Brotli builds without bounded decoding, Brotli bodies are flagged as uninspected.
+- Decoding and archive expansion have a 200 MiB output budget, four nested levels, 4,096 entries per archive, 4,096 plausible base64 candidates and 64 embedded streams per blob. WebSocket reassembly keeps only a marker-sized overlap per connection, so a compressed container split across messages is not decoded. Network decoding limits or unavailable codecs are reported as uninspected; opaque application encryption remains unreadable. On older Brotli builds without bounded decoding, Brotli bodies are flagged as uninspected.
+- Large uploads can use several times the 200 MiB capture/expansion budget in peak memory per upload because wire bytes, decoded bodies and decoder buffers coexist.
 - Gzip and zstd members are scanned beyond the first frame, within shared output limits; zstd history is capped at 128 MiB. Damaged streams and unsupported 7z archives are flagged. The older `zstandard` backend cannot verify completeness of bounded multi-frame, unknown-size or empty-frame reads, so these remain uninspected even when some markers are found.
 - Missing, unreadable or damaged capture journals produce a coverage warning while preserving valid records. CA-key removal failures are reported in the terminal and report; keep the affected run directory private.
 - Capture failures, inaccessible sockets and partial disk scans produce warnings; rows with warnings are never classified as clean. A task-file positive control confirms only that this marker was visible, not that all traffic was captured.

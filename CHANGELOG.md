@@ -2,10 +2,11 @@
 
 ## 0.4.0
 
-- Add `whatsent selftest`: an offline accuracy matrix of 1,611 cases across every supported encoding and container plus a negative corpus, run in CI and published in docs/ACCURACY.md.
-- Find markers wrapped in base64/base64url-encoded compressed data and archives, hex, UTF-16LE/BE, JSON Unicode escapes, recursive URL encoding, stacked HTTP encodings and Brotli inside gRPC/Connect; allow four decoding layers within the existing budget.
+- Add `whatsent selftest`: an offline accuracy matrix of 1,906 cases across every supported encoding and container plus a negative corpus, run in CI and published in docs/ACCURACY.md.
+- Find markers wrapped in base64/base64url-encoded compressed data and archives (including 64/76-column MIME/PEM wrapping and JSON slash/backslash escapes), hex, UTF-16LE/BE, JSON Unicode escapes, recursive URL encoding, stacked HTTP encodings and Brotli inside gRPC/Connect; allow four decoding layers within the existing budget.
+- Decode base64 gRPC-web-text before parsing RPC envelopes; give plausible base64 candidates a separate 4,096-candidate budget, skipping short non-container runs. Check ZIP/ZIP64 entry counts before materializing central directories.
 - Reassemble outbound WebSocket messages per connection so a marker split across messages is found; inspect streamed and chunked uploads and HTTP trailers, and report capture limits as uninspected.
-- Fix false positives from truncated base64, lost matches after a later corrupt compressed member, crashes on missing codecs, and hidden disk-scan truncation in Chromium stores. Keep every decoding gap reason per host in the report.
+- Fix false positives from truncated base64, lost matches after a later corrupt compressed member, crashes on missing codecs, and hidden disk-scan truncation in Chromium stores. Avoid false decoding gaps for empty HTTP bodies, sniffed-only zlib and percent sequences in binary data. Keep decoding gap reasons atomic when deduplicating them per host in the report.
 - Load mitmproxy and other capture dependencies only when capturing; `--version`, `board`, `check` and `selftest` start without them.
 - Redesign the report, web app and leaderboard as one visual system with dark mode and phone layouts.
 - Publish a static live demo on GitHub Pages: the real web app replaying a recorded run of the simulated agent, linked with the leaderboard and sample report. Add scripts to record the fixture and the README media.

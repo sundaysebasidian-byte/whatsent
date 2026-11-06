@@ -75,10 +75,10 @@ def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict |
     for ev in events:
         if ev.get("undecoded"):
             # Matching still ran on the raw bytes, but a body we could not decode may hide a canary.
-            entry = undecoded.setdefault(ev["host"], {"host": ev["host"], "encoding": "", "count": 0})
-            reasons = entry["encoding"].split("; ") if entry["encoding"] else []
+            entry = undecoded.setdefault(ev["host"], {"host": ev["host"], "reasons": [], "count": 0})
+            reasons = entry["reasons"]
             if ev["undecoded"] not in reasons:
-                entry["encoding"] = "; ".join([*reasons, ev["undecoded"]])
+                reasons.append(ev["undecoded"])
             entry["count"] += 1
         if ev["type"] == "tls_failed":
             key = f"{ev.get('host')}:{ev.get('port')}"
@@ -130,7 +130,8 @@ def summarize(meta: dict, canaries: list[dict], events: list[dict], disk: dict |
         "destinations": destinations,
         "not_inspected": {
             "tls_failed": sorted(tls_failed.values(), key=lambda e: -e["count"]),
-            "undecoded": sorted(undecoded.values(), key=lambda e: -e["count"]),
+            "undecoded": [{"host": e["host"], "encoding": "; ".join(e["reasons"]), "count": e["count"]}
+                          for e in sorted(undecoded.values(), key=lambda e: -e["count"])],
             "direct_connections": direct,
         },
         "disk": disk,

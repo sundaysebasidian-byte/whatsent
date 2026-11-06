@@ -8,6 +8,8 @@ Only `result.json` is intended for public submission. Full reports and raw journ
 
 Missing canaries do not prove that data stayed local. Pinning, application encryption, unsupported encodings, sampling gaps and size/depth limits can hide uploads. A positive control proves visibility of that marker, not complete coverage. Warnings must be reviewed before drawing conclusions. These results describe the tested configuration only.
 
+Large uploads can use several times the 200 MiB capture/expansion budget in peak memory per upload because wire bytes, decoded bodies and decoder buffers coexist.
+
 ## Dependency audit, 2026-10-30
 
 Python 3.12+ and mitmproxy 12.3.1+ are now required. The old Python 3.10 resolver selected mitmproxy 11.0.2 and produced 64 advisory records across nine packages. Python 3.10/3.11 can no longer install this candidate. Recreate older environments with Python 3.12+ when upgrading. Explicit security floors also prevent an existing environment from retaining vulnerable transitive versions that mitmproxy's broad lower bounds would otherwise allow.

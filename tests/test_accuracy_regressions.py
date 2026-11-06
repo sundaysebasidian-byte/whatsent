@@ -39,7 +39,7 @@ def test_text_decoding_shares_expansion_budget(monkeypatch):
 
 
 def test_base64_candidate_limit_is_visible(monkeypatch):
-    monkeypatch.setattr(detect, 'MAX_EMBEDDED', 2)
+    monkeypatch.setattr(detect, 'MAX_BASE64_CANDIDATES', 2)
     issues = []
     data = b'"' + b'" "'.join([base64.b64encode(gzip.compress(b'a'))] * 3) + b'"'
     detect.Matcher({}).scan(data, issues=issues)

@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 import gzip
 import io
+import json
 import random
 import tarfile
 from urllib.parse import quote_from_bytes
@@ -17,11 +18,12 @@ from whatsent.detect import Matcher, StreamMatcher, _zstd_module, decode_body, d
 TOKENS = {'task_file': 'wsc00123456789abcdef', 'dotenv': 'wsc2fedcba9876543210'}
 LIMITS = (
     'This deterministic offline corpus checks exact synthetic-token detection, not real-agent capture coverage. '
-    'Expansion shares a 200 MiB output budget with four recursive levels, 4,096 archive members and '
-    '64 base64 candidates or embedded streams per blob; RPC envelopes also have a 4,096-frame limit. '
+    'Expansion shares a 200 MiB output budget with four recursive levels, 4,096 archive members, '
+    '4,096 plausible base64 candidates and 64 embedded streams per blob; RPC envelopes also have a 4,096-frame limit. '
     'HTTP uploads retain at most 200 MiB of wire data. WebSocket reassembly retains only a token-sized '
     'outbound overlap per connection; compressed containers split beyond it and opaque application '
-    'encryption remain unreadable. Unavailable codecs, damaged containers and exhausted decoding '
+    'encryption remain unreadable. Independently base64-encoded application chunks (JSON arrays or separate '
+    'WebSocket messages) are not joined. Unavailable codecs, damaged containers and exhausted decoding '
     'or capture limits are reported as uninspected; this table does not prove zero false positives '
     'outside the corpus.'
 )
@@ -119,6 +121,36 @@ def corpus():
         data = base64.b64encode(b'x' * (1000 + offset) + TOKENS['task_file'].encode() + b'suffix')
         for split in range(len(data) - 30, len(data) - 6):
             yield Case('websocket base64 long prefix', (data[:split], data[split:]), frozenset({'task_file'}))
+    for width in (64, 76):
+        for newline in (b'\n', b'\r\n'):
+            for offset in range(width):
+                encoded = base64.b64encode(b'x' * offset + payload + b'suffix')
+                wrapped = newline.join(encoded[i:i + width] for i in range(0, len(encoded), width))
+                yield Case(f'base64 wrapped {width} columns', wrapped, expected)
+    encoded = base64.b64encode(gzip.compress(b'x' * 200 + token + b'tail', mtime=0))
+    assert b'/' in encoded
+    escaped = encoded.replace(b'/', b'\\/')
+    yield Case('JSON slash-escaped base64(gzip)', b'{"blob":"' + escaped + b'"}', frozenset({'task_file'}))
+    inner = '{"blob":"' + escaped.decode() + '"}'
+    yield Case('JSON backslash escapes', json.dumps({'nested': inner}).encode(), frozenset({'task_file'}))
+    prefix = b'\n'.join(b'index a1b2c3d4e5f6071801..0f1e2d3c4b5a697801' for _ in range(40))
+    yield Case('base64 after git diff indexes', prefix + b'\n' + base64.b64encode(payload), expected)
+    runs = b' '.join(b'"' + base64.b64encode(b'ordinary-%02d-padding' % i) + b'"' for i in range(64))
+    yield Case('base64 after 64 ordinary runs', runs + b' "' + base64.b64encode(payload) + b'"', expected)
+    for compressed in (False, True):
+        data = gzip.compress(payload, mtime=0) if compressed else payload
+        frame = bytes([int(compressed)]) + len(data).to_bytes(4, 'big') + data
+        yield Case('gRPC-web-text gzip' if compressed else 'gRPC-web-text plain',
+                   base64.b64encode(frame), expected, 'gzip' if compressed else '', True)
+    short_runs = b'"YWJjZGVmZ2hpamts" ' * 5000
+    yield Case('base64 after short runs', short_runs + base64.b64encode(payload), expected)
+    for encoding in ('gzip', 'deflate', 'zstd', 'br', 'gzip, br'):
+        yield Case('negative empty HTTP bodies', b'', frozenset(), encoding)
+    binary_payload = b'\x00\xff%41' + payload
+    yield Case('zip with binary percent sequences', _zip(binary_payload), expected)
+    invalid_zlib = b'\x78\x9c' + b'\xff' * 32
+    yield Case('negative sniffed zlib (base64)', base64.b64encode(invalid_zlib), frozenset())
+    yield Case('negative sniffed zlib (percent)', quote_from_bytes(invalid_zlib, safe='').encode(), frozenset())
     rng = random.Random(20261105)
     for size in (0, 1, 16, 128, 1024, 8192):
         for _ in range(8):
