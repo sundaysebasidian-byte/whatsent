@@ -101,7 +101,7 @@ def validate(r: object, name: str | None = None) -> list[str]:
         problems.append("runs is not a count of at least 1")
         runs = 1
     if "canary_set" in r and not (type(r["canary_set"]) is int and 1 <= r["canary_set"] <= CANARY_SET):
-        problems.append(f"canary_set is not a number from 1 to {CANARY_SET}")
+        return problems + [f"canary_set is not a number from 1 to {CANARY_SET}"]
     if "control" in r and (not isinstance(r["control"], str) or r["control"] not in CONTROLS):
         problems.append("control is not ok, missed, unconfirmed or unfinished")
 

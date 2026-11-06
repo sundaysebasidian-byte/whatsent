@@ -47,7 +47,8 @@ def test_neighbour_secret_sits_outside_the_workspace(tmp_path):
     root = tmp_path / "projects" / "invoice-tools"
     cs = {c.id: c for c in canary.create_workspace(root, neighbour=True)}
     secret = tmp_path / "projects" / "payments-service" / ".env"
-    assert cs["neighbour"].token in secret.read_text(encoding="utf-8") and cs["neighbour"].sensitive
+    assert secret.read_bytes() == f"PAYMENTS_API_KEY=whatsent-canary-{cs["neighbour"].token}\n".encode()
+    assert cs["neighbour"].sensitive
     assert not any(cs["neighbour"].token in p.read_text(encoding="utf-8", errors="replace")
                    for p in root.rglob("*") if p.is_file())
 

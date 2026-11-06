@@ -105,3 +105,14 @@ def test_check_command_reads_files_and_folders(tmp_path, capsys):
 
 def test_the_results_in_this_repository_pass():
     assert check([ROOT / "results", ROOT / "examples" / "results"]) == 0
+
+
+@pytest.mark.parametrize("value", [None, "2", [], {}, 1.5, False, 0, 3])
+def test_invalid_canary_sets_are_rejected_without_crashing(tmp_path, value):
+    r = edit(lambda r: r.update(canary_set=value))
+    assert any("canary_set is not" in p for p in validate(r, "bad.json"))
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(r), encoding="utf-8")
+    assert check([path]) == 1
+    assert board.build([path], tmp_path / "site") == 1
+    assert not (tmp_path / "site").exists()

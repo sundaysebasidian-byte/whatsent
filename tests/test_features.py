@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -199,8 +200,17 @@ def test_clean_runs_are_ranked_apart_from_default_runs():
     assert sorted(bool(r.get("clean")) for r in rows) == [False, True]
 
 
-def test_agent_gets_the_env_secret_and_a_neighbouring_project(tmp_path):
+def test_agent_gets_the_env_secret_and_a_neighbouring_project(tmp_path, monkeypatch):
     pytest.importorskip("mitmproxy")
+    monkeypatch.setenv("BILLING_API_KEY", "inherited-key")
+    launched = []
+    original_popen = subprocess.Popen
+
+    def launch(command, **kwargs):
+        launched.append((command, dict(kwargs.get("env", {}))))
+        return original_popen(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
     out = tmp_path / "out"
     script = ("import os, pathlib; pathlib.Path('seen.txt').write_text("
               "os.environ.get('BILLING_API_KEY', '') + '|' + ','.join(sorted(os.listdir('..'))))")
@@ -212,6 +222,13 @@ def test_agent_gets_the_env_secret_and_a_neighbouring_project(tmp_path):
     assert by_id["env_var"]["token"] in env and listing == "invoice-tools,payments-service"
     assert by_id["neighbour"]["token"] in (run_dir / "projects" / "payments-service" / ".env").read_text()
     assert s["canary_set"] == 2 and json.loads((run_dir / "result.json").read_text())["canary_set"] == 2
+    proxy_envs = [e for cmd, e in launched if "from mitmproxy.tools.main import mitmdump; mitmdump()" in cmd]
+    assert len(proxy_envs) == 1 and proxy_envs[0]["BILLING_API_KEY"] == "inherited-key"
+    assert os.environ["BILLING_API_KEY"] == "inherited-key"
+    for name in ("report.html", "result.json"):
+        text = (run_dir / name).read_text(encoding="utf-8")
+        assert all(c["token"] not in text for c in s["canaries"]
+                   if name == "result.json" or c["id"] != "file_name")
 
 
 def test_time_limit_stops_the_agent_and_cleans_up(tmp_path):

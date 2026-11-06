@@ -81,7 +81,7 @@ whatsent run --clean --timeout 300 --result-to results/ -- codex exec -s workspa
 
 Agents vary from run to run, so a result from one run can mislead. `--runs 3` runs the agent three times, each in a fresh canary project, and writes one combined result: a canary counts as sent if any run sent it, the board shows in how many (for example `2/3`), and uploads are averaged per run.
 
-The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean].json`. Run folders are reserved atomically (a same-second collision gets a numeric suffix). A file already there is never overwritten, including concurrent exports: a later batch of runs is saved as `-2`, `-3` and the board combines them.
+The agent version is asked from the agent (`--version`) unless you pass `--agent-version`. `--timeout` stops an agent that hangs, and `--result-to results/` saves the run's `result.json` as `results/<agent>-<version>[-clean][-setN].json`. Run folders are reserved atomically (a same-second collision gets a numeric suffix). A file already there is never overwritten, including concurrent exports: a later batch of runs is saved as `-2`, `-3` and the board combines them.
 
 Multi-run batches keep their individual reports inside one `<timestamp>-xN/` folder, alongside the combined `result.json`. The board reads that aggregate once and ignores the nested workspace files. For output from versions before 0.3.1, pass the combined result explicitly or use the `--result-to` folder to avoid counting individual runs again.
 
@@ -148,6 +148,8 @@ Results from [`results/`](results/) are what the board shows. While that folder 
 ## Known limitations
 
 See [SECURITY.md](SECURITY.md) for the trust boundary, report privacy and current dependency advisories.
+
+- The project layout is not a filesystem sandbox: `../..` reaches raw run files, including `canaries.json`. Uploading those files can expose every marker without reading its planted source.
 
 - Without `--capture local`, only traffic that honours proxy settings is decrypted. Tools that pin certificates or ship their own trust store are listed under "Not inspected", not analysed.
 - IDE support relies on Electron honouring `--proxy-server` and the extension host honouring `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`. It has been tested with a stand-in app, not yet with real Cursor or Trae. App names other than the path you pass may not match your install.

@@ -116,5 +116,6 @@ def test_run_app_end_to_end(tmp_path, monkeypatch):
     (run_dir,) = out.iterdir()
     s = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
     assert s["agent"] == "fakeide" and s["kind"] == "app"
-    assert {c["id"]: c for c in s["canaries"]}["task_file"]["sent_to"] == ["127.0.0.1"]
+    by_id = {c["id"]: c for c in s["canaries"]}
+    assert all(by_id[cid]["sent_to"] == ["127.0.0.1"] for cid in ("task_file", "env_var", "neighbour"))
     assert any("exited after" in w for w in s["warnings"])  # quick exit looks like a hand-over

@@ -57,3 +57,20 @@ def test_each_canary_set_is_ranked_on_its_own(tmp_path):
     html = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
     assert html.index("Canary set 2") < html.index("<b>new</b>") < html.index("Canary set 1") < html.index("<b>old</b>")
     assert html.count('<td class="n" data-label="#">1</td>') == 2
+
+
+def test_batches_combine_within_each_set_and_keep_set_in_json(tmp_path):
+    old = json.loads((EXAMPLES / "example-agent-a.json").read_text(encoding="utf-8"))
+    batches = [old, {**old, "canary_set": 1}, {**old, "canary_set": 2}, {**old, "canary_set": 2}]
+    for i, r in enumerate(batches):
+        (tmp_path / f"batch-{i}.json").write_text(json.dumps(r), encoding="utf-8")
+    assert board.build([tmp_path], tmp_path / "site") == 0
+    rows = json.loads((tmp_path / "site" / "leaderboard.json").read_text(encoding="utf-8"))["results"]
+    assert [(board.canary_set(r), r["runs"]) for r in rows] == [(2, 2), (1, 2)]
+    assert board.combine([rows[0], rows[0]])["canary_set"] == 2
+
+
+def test_a_single_set_is_identified_on_the_board():
+    r = json.loads((EXAMPLES / "example-agent-a.json").read_text(encoding="utf-8"))
+    assert "<h2>Canary set 1</h2>" in board.render([r])
+    assert "<h2>Canary set 2</h2>" in board.render([{**r, "canary_set": 2}])

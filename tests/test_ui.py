@@ -156,11 +156,12 @@ def test_demo_run_streams_live_events_and_report(server):
     assert [e["seq"] for e in got] == list(range(1, len(got) + 1))
     assert {"canaries", "ready", "launched", "req", "gap", "finishing"} <= set(kinds)
     tokens = {c["id"] for c in next(e for e in got if e["kind"] == "canaries")["items"]}
-    assert "dotenv" in tokens
+    assert {"dotenv", "env_var", "neighbour"} <= tokens
     assert all("token" not in c for c in next(e for e in got if e["kind"] == "canaries")["items"])
 
     reqs = [e for e in got if e["kind"] == "req"]
-    assert any("dotenv" in e["canaries"] and e["host"] == "telemetry.demo-agent.test" for e in reqs)
+    assert any({"dotenv", "env_var"} <= set(e["canaries"])
+               and e["host"] == "telemetry.demo-agent.test" for e in reqs)
     assert any(e["kind"] == "gap" and e["why"] == "tls" for e in got)  # the pinned connection
 
     report = got[-1]["report"]

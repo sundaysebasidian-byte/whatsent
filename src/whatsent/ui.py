@@ -169,9 +169,9 @@ def terminal_command(script: Path, child_args: list[str]) -> list[str]:
 
 
 def open_in_terminal(name: str, command: list[str], cwd: Path, env: dict[str, str],
-                     timeout: float = 30) -> TerminalAgent:
+                     run_dir: Path, timeout: float = 30) -> TerminalAgent:
     # A reopened terminal must never read a prior launch's PID, exit code or spec.
-    run_dir = reserve_directory(cwd.parent / "terminal")
+    run_dir = reserve_directory(run_dir / "terminal")
     added = {k: v for k, v in env.items() if os.environ.get(k) != v}
     pkg_parent = str(Path(__file__).resolve().parent.parent)  # works from a source checkout too
     added["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_parent, os.environ.get("PYTHONPATH")]))
@@ -319,7 +319,7 @@ class Job:
             launcher = detached
         else:
             def launcher(cmd, cwd, env):
-                return open_in_terminal(self.tool["name"], cmd, cwd, env)
+                return open_in_terminal(self.tool["name"], cmd, cwd, env, s.run_dir)
         try:
             s.launch(launcher)
         except OSError as exc:

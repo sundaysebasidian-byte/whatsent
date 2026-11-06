@@ -30,9 +30,9 @@ def test_terminal_relaunch_ignores_previous_exit_and_preserves_spec(tmp_path, mo
         return SimpleNamespace(pid=os.getpid())
 
     monkeypatch.setattr(ui.subprocess, "Popen", launch)
-    first = ui.open_in_terminal("first", [sys.executable], workspace, dict(os.environ))
+    first = ui.open_in_terminal("first", [sys.executable], workspace, dict(os.environ), tmp_path)
     first.exitfile.write_text("17")
-    second = ui.open_in_terminal("second", [sys.executable], workspace, dict(os.environ))
+    second = ui.open_in_terminal("second", [sys.executable], workspace, dict(os.environ), tmp_path)
     assert second.poll() is None
     assert first.poll() == 17
     assert first.exitfile != second.exitfile
@@ -58,7 +58,7 @@ def test_failed_terminal_start_marks_the_launch_cancelled(tmp_path, monkeypatch)
 
     monkeypatch.setattr(ui, "TerminalAgent", failed)
     with pytest.raises(ui.UIError):
-        ui.open_in_terminal("test", [sys.executable], workspace, dict(os.environ))
+        ui.open_in_terminal("test", [sys.executable], workspace, dict(os.environ), tmp_path)
     (spec_path,) = tmp_path.rglob("agent.json")
     assert Path(json.loads(spec_path.read_text())["cancel_file"]).is_file()
 
@@ -114,3 +114,34 @@ def test_late_terminal_helper_does_not_start_command(tmp_path, reason):
     assert child.main([str(spec)]) == 125
     assert not marker.exists()
     assert (tmp_path / "agent.exit").read_text() == "125"
+
+
+def test_ui_terminal_spec_stays_outside_the_projects(tmp_path, monkeypatch):
+    from whatsent import canary
+
+    args = build_parser().parse_args(["run", "--out", str(tmp_path), "--no-default-watch",
+                                     "--agent-version", "test", "--", "fake"])
+    job = ui.Job(SimpleNamespace(), {"name": "fake"}, args, ["fake"], None)
+    s = job.session
+    s.prepare()
+    s.env = {**os.environ, **canary.agent_env(s.canaries)}
+    s.proxy = SimpleNamespace(local_spec="test")
+    monkeypatch.setattr(ui, "terminal_command", lambda script, args: ["fake-terminal", str(script)])
+    specs = []
+
+    def launch(args, **kwargs):
+        spec_path = (Path(args[-1]) if "whatsent.child" in args else
+                     Path(shlex.split(Path(args[-1]).read_text().splitlines()[-1])[-1]))
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        Path(spec["pidfile"]).write_text(str(os.getpid()))
+        specs.append((spec_path, spec, kwargs["env"]))
+        return SimpleNamespace(pid=os.getpid())
+
+    monkeypatch.setattr(ui.subprocess, "Popen", launch)
+    job._launch()
+    spec_path, spec, terminal_env = specs[0]
+    assert spec_path.parent.parent == s.run_dir
+    assert sorted(p.name for p in s.workspace.parent.iterdir()) == ["invoice-tools", "payments-service"]
+    assert spec["env"][canary.ENV_VAR] == s.env[canary.ENV_VAR]
+    assert spec["cwd"] == str(s.workspace)
+    assert all(c["token"] not in json.dumps(terminal_env) for c in s.canaries)
