@@ -32,7 +32,7 @@ jobs:
         run: |
           if ls results/*.json >/dev/null 2>&1; then src=results; else src=examples/results; fi
           whatsent board "$src" -o site
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
