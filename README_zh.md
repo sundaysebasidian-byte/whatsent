@@ -136,7 +136,7 @@ whatsent run --app trae --capture local:Trae
 
 ## 测评榜
 
-`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。`whatsent check results/` 会拒绝带了汇总以外内容、或数字对不上的文件，CI 在每个 PR 上都会跑它。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
+`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。`whatsent check results/` 会拒绝带了汇总以外内容、或数字对不上的文件，CI 在每个 PR 上都会跑它。榜单生成前会校验全部输入，拒绝无效或空输入；只有 Agent 版本、clean 配置、系统及架构、捕获模式、whatsent 版本和金丝雀定义一致的结果才合并。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
 
 测评榜展示的是 [`results/`](results/) 里的真实结果；这个目录为空时，才展示虚构 Agent 的示例数据，页面上会明确标注为示例（见 [examples/make_examples.py](examples/make_examples.py)）。
 
@@ -150,12 +150,10 @@ whatsent run --app trae --capture local:Trae
 信任边界、报告隐私和当前依赖安全公告见 [SECURITY.md](SECURITY.md)。
 
 - HTTP 请求读取完毕就记录外发数据，不必等待流式响应结束；记录到上传不代表远端已存储或处理。
-- 解码及归档展开采用 200 MiB 输出预算、四层嵌套、每包 4,096 个条目、每段数据 64 个 base64 候选或嵌入压缩流的上限。WebSocket 重组每个连接只保留一个标记长度的重叠，所以被拆到多条消息里的压缩容器无法解开。达到网络解码上限或缺少解码能力时标为未能检查；旧 Brotli 库若不支持有界解码，也会明确标出。
+- 解码及归档展开采用 200 MiB 输出预算、四层嵌套、每包 4,096 个条目、每段数据 4,096 个有效 base64 候选和 64 个嵌入压缩流的上限。WebSocket 重组每个连接只保留一个标记长度的重叠，所以被拆到多条消息里的压缩容器无法解开。达到网络解码上限或缺少解码能力时标为未能检查；旧 Brotli 库若不支持有界解码，也会明确标出。
 - gzip 和 zstd 会继续扫描后续压缩帧，且共用输出上限；zstd 历史缓冲区限制为 128 MiB。损坏流及不支持的 7z 会明确标出。较旧的 `zstandard` 后端不能验证有界多帧、未知大小或空帧读取的完整性，即使发现部分标记也仍标为未能完整检查。
 - 采集日志缺失、无法读取或损坏时，保留有效记录并显示覆盖警告。CA 私钥删除失败会在终端和报告中提示；此时应保密保存该运行目录。
 - 抓包中断、套接字访问被拒和磁盘扫描不完整都会显示警告；带警告的榜单结果不会判为干净。任务标记可见只能确认该标记被捕获，不能证明所有流量都已捕获。
-- 榜单生成前会校验全部输入，拒绝无效或空输入；只有 Agent 版本、clean 配置、系统及架构、捕获模式、whatsent 版本和金丝雀定义一致的结果才合并。
-
 - 不加 `--capture local` 时，只能解密遵守代理设置的流量。做了证书锁定或自带信任库的工具会列在"未能检查"里，不做内容分析。
 - IDE 支持依赖 Electron 遵守 `--proxy-server`、扩展进程遵守 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`。目前只用替身程序测过，还没用真实的 Cursor 或 Trae 测过。除了你直接传路径，内置的 App 名称不一定和你的安装一致。
 - `--capture local` 还没在真实 Mac 和 Windows 电脑上测过；Linux 下需要 root 和 eBPF。

@@ -483,7 +483,7 @@ def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
     ] for h in s["destinations"]]
 
     ni = s["not_inspected"]
-    gap_rows = [[f"<code>{e(str(g['host']))}:{e(str(g['port']))}</code>",
+    gap_rows = [[f"<code>{e(str(g['host']))}{'' if g.get('port') is None else ':' + e(str(g['port']))}</code>",
                  "rejected whatsent's certificate (pinning or own trust store)", str(g["count"])]
                 for g in ni["tls_failed"]]
     gap_rows += [[f"<code>{e(str(g['host']))}</code>",
@@ -491,10 +491,10 @@ def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
                  for g in ni.get("undecoded", [])]
     for c in ni["direct_connections"]:
         if c.get("proto") == "udp":
-            why = f"UDP from <code>{e(c['process'])}</code> (often QUIC / HTTP/3), never decrypted"
+            why = f"UDP from <code>{e(str(c.get('process') or 'unknown process'))}</code> (often QUIC / HTTP/3), never decrypted"
         else:
-            why = f"direct connection by <code>{e(c['process'])}</code>, ignored the proxy settings"
-        gap_rows.append([f"<code>{e(c['ip'])}:{c['port']}</code>", why + (" (local)" if c["local"] else ""), "–"])
+            why = f"direct connection by <code>{e(str(c.get('process') or 'unknown process'))}</code>, ignored the proxy settings"
+        gap_rows.append([f"<code>{e(str(c['ip']))}:{e(str(c['port']))}</code>", why + (" (local)" if c["local"] else ""), "–"])
 
     d = s["disk"]
 
@@ -543,7 +543,7 @@ def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
 <section><h2>Canaries</h2>
 <p class="note">Fake, randomly generated markers planted in a throwaway project. Red means something no task needed left the machine.</p>
 {table(["Planted as", "File", "What happened"], canary_rows, "No canaries were planted.")}
-<details><summary>Command and prompt</summary><code>{e(" ".join(s["command"]))}</code>
+<details><summary>Command and prompt</summary><code>{e(" ".join(s.get("command") or []))}</code>
 <code>{e(s.get("task_prompt", ""))}</code></details></section>
 
 <section><h2>Where traffic went</h2>
@@ -559,6 +559,6 @@ def render_html(s: dict, nav: list[tuple[str, str]] | None = None) -> str:
 Encrypted uploads usually show up here as a new archive or large blob.</p>
 {table(["File", "Size", "Finding"], disk_rows, "No canaries or new archives found.", {1})}{other_files}</section>
 
-<footer>whatsent {e(s["whatsent_version"])} · {e(s["platform"])} · capture: {e(s.get("capture", "env"))} · canary values are fake and unique to this run · {REPO}</footer>
+<footer>whatsent {e(str(s.get("whatsent_version", "")))} · {e(str(s.get("platform", "")))} · capture: {e(s.get("capture", "env"))} · canary values are fake and unique to this run · {REPO}</footer>
 </main></body></html>
 """

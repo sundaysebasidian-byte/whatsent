@@ -146,3 +146,15 @@ def test_summary_keeps_every_decoding_gap_per_host():
     (entry,) = s["not_inspected"]["undecoded"]
     assert entry["count"] == 3
     assert entry["encoding"] == "gzip stream not fully decoded; capture body limit reached"
+
+
+def test_report_renders_gaps_with_missing_port_and_process():
+    from whatsent.report import render_html, summarize
+
+    events = [{"type": "tls_failed", "host": "pinned.test", "port": None, "error": "x"}]
+    direct = [{"ip": "203.0.113.9", "port": 443, "proto": "tcp", "process": None, "local": False}]
+    meta = {"duration_s": 1, "exit_code": 0, "started_at": "2026-11-05T00:00:00", "command": ["agent"]}
+    s = summarize(meta, [], events, None, direct)
+    html = render_html(s)
+    assert "pinned.test</code>" in html and ":None" not in html
+    assert "unknown process" in html

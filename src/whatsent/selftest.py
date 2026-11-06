@@ -201,7 +201,14 @@ def render(results: list[Result], *, markdown: bool = False) -> str:
         lines = [f'{name:<{width}}  {status}  ({count})' for name, count, status in rows]
     warnings = sorted({issue for r in results if not r.name.startswith('negative') for issue in r.issues})
     if warnings:
-        lines.extend(['', 'Uninspected: ' + '; '.join(warnings)])
+        label = 'Uninspected: ' if markdown else 'Limits reported as uninspected, as intended: '
+        lines.extend(['', label + '; '.join(warnings)])
+    if not markdown:
+        negative = sum(r.cases for r in results if r.name.startswith('negative'))
+        total = sum(r.cases for r in results)
+        failed = sum(r.failures for r in results)
+        verdict = 'no misses, no false positives' if not failed else f'{failed} FAILED'
+        lines.extend(['', f'{total:,} cases ({total - negative:,} positive, {negative:,} negative): {verdict}'])
     return '\n'.join(lines) + '\n'
 
 
