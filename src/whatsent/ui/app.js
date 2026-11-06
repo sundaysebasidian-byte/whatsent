@@ -16,7 +16,7 @@
     zh: {
       steps: ['选工具', '准备', '记录中', '报告'],
       welcomeTitle: 'AI 编程工具，把什么发出去了？', welcomeSub: '在假项目里跑一遍，一看便知。',
-      start: '开始体检', demo: '看演示', demoName: '演示 Agent',
+      start: '开始检测', demo: '看演示', demoName: '演示 Agent',
       promises: ['不碰真实项目', '不改系统设置', '数据不出本机'],
       searchPh: '搜索工具…', found: (n) => `找到 ${n} 个`, scanning: '正在查找…', noMatch: '没有匹配',
       groupApp: '桌面 App', groupCli: '命令行工具', notFound: '未找到', running: '正在运行', kindApp: 'App', kindCli: '命令行',
@@ -418,8 +418,8 @@
     }
     if (pill) pill.textContent = t.replay;
     seg.replaceChildren(
-      h('button', { type: 'button', class: S.lang === 'zh' ? 'on' : '', onclick: () => setLang('zh') }, '中文'),
-      h('button', { type: 'button', class: S.lang === 'en' ? 'on' : '', onclick: () => setLang('en') }, 'EN'));
+      h('button', { type: 'button', class: S.lang === 'zh' ? 'on' : '', 'aria-pressed': String(S.lang === 'zh'), onclick: () => setLang('zh') }, '中文'),
+      h('button', { type: 'button', class: S.lang === 'en' ? 'on' : '', 'aria-pressed': String(S.lang === 'en'), onclick: () => setLang('en') }, 'EN'));
     hairFill.style.width = `${idx < 0 ? 0 : Math.round(((idx + 1) / 4) * 100)}%`;
     document.documentElement.lang = S.lang === 'zh' ? 'zh-CN' : 'en';
   }
@@ -732,7 +732,7 @@
       feedEmpty.hidden = shown > 0;
 
       const secrets = Object.entries(sentTo).filter(([id]) => byId[id] && byId[id].sensitive);
-      const alertText = secrets.slice(0, 2).map(([id, host]) => `${canaryLabel(byId[id])} → ${host}`).join('，');
+      const alertText = secrets.slice(0, 2).map(([id, host]) => `${canaryLabel(byId[id])} → ${host}`).join(S.lang === 'zh' ? '，' : ', ');
       if (alertText !== lastAlert) {
         lastAlert = alertText;
         alertBox.replaceChildren(alertText ? h('div', { class: 'alert' },
@@ -928,7 +928,9 @@
         const a = h('a', { href: URL.createObjectURL(blob), download: file });
         document.body.append(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        toastBox.replaceChildren(h('div', { class: 'toast', role: 'status' }, icon(CHECK, 15, 'currentColor', 2.6), t.exported(file)));
+        const toast = h('div', { class: 'toast', role: 'status' }, icon(CHECK, 15, 'currentColor', 2.6), t.exported(file));
+        toastBox.replaceChildren(toast);
+        setTimeout(() => toast.remove(), 4000);
       }, 'image/png');
     };
     const again = () => { S.report = null; if (REPLAY) return startDemo(); S.job = null; S.deep = false; return go('pick'); };
