@@ -8,6 +8,7 @@ import gzip
 import io
 import json
 import random
+import sys
 import tarfile
 from urllib.parse import quote_from_bytes
 import zipfile
@@ -198,8 +199,9 @@ def run_corpus() -> list[Result]:
     return list(results.values())
 
 
-def render(results: list[Result], *, markdown: bool = False) -> str:
-    rows = [(r.name, str(r.cases), '✓' if not r.failures else f'✗ ({r.failures} failed)') for r in results]
+def render(results: list[Result], *, markdown: bool = False, ascii_only: bool = False) -> str:
+    ok, bad = ('ok', 'FAIL') if ascii_only else ('✓', '✗')
+    rows = [(r.name, str(r.cases), ok if not r.failures else f'{bad} ({r.failures} failed)') for r in results]
     if markdown:
         lines = ['| Encoding / corpus | Cases | Exact matches |', '| --- | ---: | :---: |']
         lines.extend(f'| {name} | {count} | {status} |' for name, count, status in rows)
@@ -222,5 +224,15 @@ def render(results: list[Result], *, markdown: bool = False) -> str:
 
 def main(*, markdown: bool = False) -> int:
     results = run_corpus()
-    print(render(results, markdown=markdown), end='')
+    if markdown:  # a document: always UTF-8, whatever the console encoding
+        sys.stdout.flush()
+        sys.stdout.buffer.write(render(results, markdown=True).encode('utf-8'))
+        sys.stdout.buffer.flush()
+    else:
+        try:
+            '✓✗'.encode(sys.stdout.encoding or 'ascii')
+            ascii_only = False
+        except (LookupError, UnicodeEncodeError):
+            ascii_only = True  # e.g. a legacy Windows console (cp1252)
+        print(render(results, ascii_only=ascii_only), end='')
     return int(any(r.failures for r in results))
