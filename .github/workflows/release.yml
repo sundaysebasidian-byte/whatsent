@@ -1,0 +1,90 @@
+name: release
+
+# One-time setup for publishing is described in docs/RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check that the tag matches the package version
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"tag {tag!r} does not match project.version {version!r}")
+          print(f"tag {tag} matches version {version}")
+          PY
+      - run: pip install build twine
+      - run: python -m build
+      - name: Check the distribution metadata
+        run: twine check dist/*
+      - name: Smoke-test the wheel as installed
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv smoke
+          smoke/bin/python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          reported=$(smoke/bin/whatsent --version)
+          echo "$reported"
+          [ "$reported" = "whatsent ${GITHUB_REF_NAME#v}" ]
+          smoke/bin/whatsent demo --out smoke-demo
+          test -f smoke-demo/*/report.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/whatsent
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Take the release notes from CHANGELOG.md
+        run: |
+          python - <<'PY'
+          import os, sys
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          lines = open("CHANGELOG.md", encoding="utf-8").read().splitlines()
+          start = next((i for i, line in enumerate(lines) if line.strip() == f"## {version}"), None)
+          if start is None:
+              sys.exit(f"CHANGELOG.md has no section for {version}")
+          notes = [lines[start].lstrip("# ").strip()]
+          for line in lines[start + 1:]:
+              if line.startswith("## "):
+                  break
+              notes.append(line)
+          text = "\n".join(notes).strip() + "\n"
+          open("release-notes.md", "w", encoding="utf-8").write(text)
+          PY
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

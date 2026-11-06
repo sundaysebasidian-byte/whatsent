@@ -13,7 +13,24 @@ import threading
 import time
 from pathlib import Path
 
-from whatsent.detect import Matcher, decode_body
+from whatsent.detect import MAX_EXPANDED, Matcher, StreamMatcher, decode_body, decode_framed
+
+MAX_CAPTURE_BODY = MAX_EXPANDED
+
+
+class _Upload:
+    def __init__(self):
+        self.body = bytearray()
+        self.size = 0
+        self.complete = False
+
+    def __call__(self, chunk: bytes) -> bytes:
+        self.size += len(chunk)
+        remaining = MAX_CAPTURE_BODY - len(self.body)
+        self.body.extend(chunk[:remaining])
+        if not chunk:
+            self.complete = True
+        return chunk
 
 
 class Recorder:
@@ -48,18 +65,45 @@ class Recorder:
         mode = getattr(conn, "proxy_mode", None)
         return "local" if mode is not None and getattr(mode, "type_name", "") == "local" else "proxy"
 
+    def requestheaders(self, flow) -> None:
+        # Always take ownership before mitmproxy can auto-stream a large/chunked body.
+        # Pass chunks through unchanged, retaining a bounded prefix for container decoding.
+        flow.request.stream = _Upload()
+
     def _http(self, flow, error: str | None = None) -> None:
         req = flow.request
         issues = []
         encoding = req.headers.get("content-encoding", "")
-        body = decode_body(req.raw_content or b"", encoding, issues)
-        if req.raw_content is None:
-            issues.append("request body unavailable (streamed)")
+        state = req.stream
+        if isinstance(state, _Upload) and req.raw_content is None:
+            raw = bytes(state.body)
+            wire_size = state.size
+            if not state.complete:
+                issues.append("request body stream incomplete")
+            # Release retained uploads after journaling; the completion hook reuses the record.
+            state.body.clear()
+        else:
+            raw = (req.raw_content or b"")[:MAX_CAPTURE_BODY]
+            wire_size = len(req.raw_content or b"")
+            if req.raw_content is None:
+                issues.append("request body unavailable (streamed)")
+        if wire_size > MAX_CAPTURE_BODY:
+            issues.append("request body capture limit reached")
+        body = decode_body(raw, encoding, issues)
         head = f"{req.method} {req.url}\n".encode() + b"\n".join(
             k.encode() + b": " + v.encode() for k, v in req.headers.items(multi=True)
         )
+        if req.trailers:
+            head += b"\n" + b"\n".join(k + b": " + v for k, v in req.trailers.fields)
         resp = flow.response
-        hits = self.matcher.scan(head, issues=issues) | self.matcher.scan(body, issues=issues)
+        hits = self.matcher.scan(head, issues=issues) | self.matcher.scan(raw, issues=issues)
+        if body != raw:
+            hits |= self.matcher.scan(body, issues=issues)
+        content_type = req.headers.get("content-type", "").lower().split(";", 1)[0]
+        if content_type.startswith(("application/grpc", "application/connect+")):
+            message_encoding = req.headers.get("grpc-encoding", req.headers.get("connect-content-encoding", ""))
+            framed = decode_framed(body, message_encoding, issues)
+            hits |= self.matcher.scan(framed, issues=issues)
         undecoded = "; ".join(issues) or None
         record = {
             "type": "http",
@@ -70,7 +114,7 @@ class Recorder:
             "method": req.method,
             "path": req.path[:300],
             "status": resp.status_code if resp else None,
-            "bytes_out": len(head) + len(req.raw_content or b""),
+            "bytes_out": len(head) + wire_size,
             "bytes_in": len(resp.raw_content or b"") if resp else 0,
             "canaries": sorted(hits),
             "error": error,
@@ -108,7 +152,10 @@ class Recorder:
         if not msg.from_client:
             return
         issues = []
-        hits = self.matcher.scan(msg.content, issues=issues)
+        stream = StreamMatcher(self.matcher)
+        stream.tail = flow.metadata.get("whatsent_websocket_tail", b"")
+        hits = stream.scan(msg.content, issues=issues)
+        flow.metadata["whatsent_websocket_tail"] = stream.tail
         self._write({
             "type": "websocket",
             "host": flow.request.pretty_host,
@@ -119,6 +166,9 @@ class Recorder:
             "undecoded": "; ".join(issues) or None,
             "via": self._via(flow.client_conn),
         })
+
+    def websocket_end(self, flow) -> None:
+        flow.metadata.pop("whatsent_websocket_tail", None)
 
     def tls_failed_client(self, data) -> None:
         # The agent refused our certificate: likely certificate pinning or a

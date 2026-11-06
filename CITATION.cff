@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use whatsent in research or reporting, cite it as below."
+title: whatsent
+abstract: >-
+  A command line tool that runs an AI coding agent inside a throwaway project
+  full of planted canary values and records what the agent sends off the
+  machine, using a local proxy, a disk watch and a bypass check.
+type: software
+authors:
+  - name: "sebasidian sunday"
+repository-code: "https://github.com/sundaysebasidian-byte/whatsent"
+url: "https://github.com/sundaysebasidian-byte/whatsent"
+license: MIT

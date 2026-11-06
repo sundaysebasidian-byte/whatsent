@@ -33,11 +33,23 @@ def test_matcher_finds_encoded_forms():
 def test_workspace_plants_unique_tokens(tmp_path):
     cs = canary.create_workspace(tmp_path)
     assert len({c.token for c in cs}) == len(cs)
+    assert not (tmp_path.parent / "payments-service").exists()  # only planted when asked
     for c in cs:
         if c.id == "file_name":
             assert (tmp_path / c.file).exists() and c.token in c.file
+        elif c.id == "env_var":
+            assert canary.agent_env([c.to_dict()]) == {canary.ENV_VAR: f"whatsent-canary-{c.token}"}
         elif c.id != "git_history":
             assert c.token in (tmp_path / c.file).read_text(encoding="utf-8")
+
+
+def test_neighbour_secret_sits_outside_the_workspace(tmp_path):
+    root = tmp_path / "projects" / "invoice-tools"
+    cs = {c.id: c for c in canary.create_workspace(root, neighbour=True)}
+    secret = tmp_path / "projects" / "payments-service" / ".env"
+    assert cs["neighbour"].token in secret.read_text(encoding="utf-8") and cs["neighbour"].sensitive
+    assert not any(cs["neighbour"].token in p.read_text(encoding="utf-8", errors="replace")
+                   for p in root.rglob("*") if p.is_file())
 
 
 def test_diskwatch_diff(tmp_path):
@@ -132,3 +144,29 @@ def test_undecoded_bodies_count_as_not_inspected():
     s = report.summarize(meta, canaries, events, None, [])
     assert s["totals"]["not_inspected"] == 1
     assert s["not_inspected"]["undecoded"] == [{"host": "api.example.com", "encoding": "x-custom", "count": 1}]
+
+
+def test_summary_keeps_every_decoding_gap_per_host():
+    from whatsent.report import summarize
+
+    events = [
+        {"type": "http", "host": "h.test", "undecoded": "gzip stream not fully decoded", "canaries": []},
+        {"type": "http", "host": "h.test", "undecoded": "capture body limit reached", "canaries": []},
+        {"type": "http", "host": "h.test", "undecoded": "gzip stream not fully decoded", "canaries": []},
+    ]
+    s = summarize({}, [], events, None, [])
+    (entry,) = s["not_inspected"]["undecoded"]
+    assert entry["count"] == 3
+    assert entry["encoding"] == "gzip stream not fully decoded; capture body limit reached"
+
+
+def test_report_renders_gaps_with_missing_port_and_process():
+    from whatsent.report import render_html, summarize
+
+    events = [{"type": "tls_failed", "host": "pinned.test", "port": None, "error": "x"}]
+    direct = [{"ip": "203.0.113.9", "port": 443, "proto": "tcp", "process": None, "local": False}]
+    meta = {"duration_s": 1, "exit_code": 0, "started_at": "2026-11-05T00:00:00", "command": ["agent"]}
+    s = summarize(meta, [], events, None, direct)
+    html = render_html(s)
+    assert "pinned.test</code>" in html and ":None" not in html
+    assert "unknown process" in html

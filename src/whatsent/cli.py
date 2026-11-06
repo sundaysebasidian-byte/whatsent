@@ -17,12 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import psutil
-
-from whatsent import __version__, agents, apps, board, canary, diskwatch, report
+from whatsent import __version__, apps
 from whatsent.capture import Proxy, hide_credentials, normalize_upstream, upstream_from_env
-from whatsent.detect import Matcher
-from whatsent.netwatch import ConnectionSampler
 
 QUICK_EXIT = 5.0  # an app that quits this fast probably handed over to a running copy
 
@@ -80,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     board.add_argument("-o", "--out", type=Path, default=Path("site"), help="output folder (default: ./site)")
     check = sub.add_parser("check", help="check result.json files before they are added to the leaderboard")
     check.add_argument("results", nargs="+", type=Path, help="result.json files or folders containing them")
+    selftest = sub.add_parser("selftest", help="run the offline detection accuracy corpus")
+    selftest.add_argument("--markdown", action="store_true", help="write the accuracy table as Markdown to stdout")
     return p
 
 
@@ -96,6 +94,9 @@ def _main(args: argparse.Namespace) -> int:
     if getattr(args, "port", None) is not None and not 0 <= args.port <= 65535:
         print("whatsent: --port must be between 0 and 65535 (0 selects a free port)", file=sys.stderr)
         return 2
+    if args.cmd == "selftest":
+        from whatsent.selftest import main as selftest
+        return selftest(markdown=args.markdown)
     if args.cmd == "demo":
         from whatsent.demo import run_demo
         return run_demo(args)
@@ -170,6 +171,8 @@ def run(args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | No
 
 def _run_session(session: "Session", args: argparse.Namespace, app: apps.ResolvedApp | None,
                  collect: list[dict] | None) -> int:
+    from whatsent import canary
+
     print(f"whatsent: snapshotting {len(session.roots)} folders...", file=sys.stderr)
     session.prepare()
     try:
@@ -227,6 +230,8 @@ whatsent: {how}
 
 def run_many(args: argparse.Namespace, command: list[str]) -> int:
     """Run the agent ``args.runs`` times, then write one combined result."""
+    from whatsent import board
+
     folder = reserve_directory(args.out / f"{datetime.now():%Y%m%d-%H%M%S}-x{args.runs}")
     summaries: list[dict] = []
     codes = []
@@ -249,6 +254,8 @@ def run_many(args: argparse.Namespace, command: list[str]) -> int:
 
 
 def print_combined(r: dict, path: Path) -> None:
+    from whatsent import report
+
     t, n = r["totals"], r["runs"]
     lines = [f"\nwhatsent: {r['agent']} over {n} runs: {t['leaked']} of {t['canaries']} canaries left this "
              f"machine in at least one run ({t['leaked_sensitive']} sensitive)"]
@@ -269,6 +276,8 @@ def _terminate(signum: int, frame) -> None:
 def save_result(result: Path, folder: Path, summary: dict) -> Path:
     """Copy result.json to ``folder`` as <agent>-<version>[-clean].json, the name the leaderboard expects.
     A file already there is kept: this batch of runs gets -2, -3 ... and the board combines them."""
+    from whatsent import board
+
     folder.mkdir(parents=True, exist_ok=True)
     batch = 1
     data = result.read_bytes()
@@ -310,6 +319,8 @@ class Session:
     through; ``whatsent ui`` drives the same steps one by one and can stop the agent early."""
 
     def __init__(self, args: argparse.Namespace, command: list[str], app: apps.ResolvedApp | None = None):
+        from whatsent import agents, diskwatch
+
         self.args = args
         self.app = app
         self.name = args.name or (app.name if app else Path(command[0]).name)
@@ -320,7 +331,7 @@ class Session:
                 command = [os.path.abspath(executable), *command[1:]]
         self.started = datetime.now()
         self.run_dir = (args.out / self.started.strftime("%Y%m%d-%H%M%S")).resolve()
-        self.workspace = self.run_dir / "workspace"
+        self.workspace = self.run_dir / "projects" / "invoice-tools"
         self.roots = ([] if args.no_default_watch else diskwatch.default_roots()) + \
             [w.resolve() for w in args.watch]
         self.warnings: list[str] = []
@@ -348,9 +359,13 @@ class Session:
         self.duration = 0.0
 
     def prepare(self) -> None:
+        from whatsent import agents, canary, diskwatch
+        from whatsent.detect import Matcher
+
         self.run_dir = reserve_directory(self.run_dir)
-        self.workspace = self.run_dir / "workspace"
-        self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace)]
+        self.workspace = self.run_dir / "projects" / "invoice-tools"
+        # The project gets a folder of its own, so ".." shows a neighbouring project rather than this run's files.
+        self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace, neighbour=True)]
         self.canaries_file = self.run_dir / "canaries.json"
         self.canaries_file.write_text(json.dumps(self.canaries, indent=2), encoding="utf-8")
         self.matcher = Matcher({c["id"]: c["token"] for c in self.canaries})
@@ -377,6 +392,8 @@ class Session:
 
     def start_proxy(self, capture: str | None = None) -> None:
         """Start the proxy, or restart it with another capture mode before the agent is launched."""
+        from whatsent import canary
+
         capture = capture or getattr(self.args, "capture", "env")
         local_spec = None
         if capture.startswith("local"):
@@ -393,6 +410,7 @@ class Session:
         self.proxy.start()
         self.env = self.proxy.agent_env(dict(os.environ), self.proxy.write_ca_bundle(self.run_dir / "ca-bundle.pem"))
         self.env.update(self.extra_env)
+        self.env.update(canary.agent_env(self.canaries))
 
     def agent_command(self) -> list[str]:
         if self.app:
@@ -401,6 +419,8 @@ class Session:
 
     def launch(self, launcher=popen) -> None:
         """Start (or restart) the agent. ``launcher(command, cwd, env)`` returns the process."""
+        from whatsent.netwatch import ConnectionSampler
+
         self.agent = launcher(self.agent_command(), self.workspace, self.env)
         self.launched_at = time.monotonic()
         self.t0 = self.t0 or self.launched_at
@@ -414,6 +434,8 @@ class Session:
 
     def stop_agent(self, timeout: float = 10) -> None:
         """Ask the agent to quit, the way closing its window would, and kill it if it hangs."""
+        import psutil
+
         agent = self.agent
         if agent is None or agent.poll() is not None:
             return
@@ -479,6 +501,8 @@ class Session:
             self.args.demo_cleanup()
 
     def finish(self) -> tuple[dict, Path]:
+        from whatsent import canary, diskwatch, report
+
         self.close(final=True)
         if self.app and self.exit_code != "stopped" and self.last_run < QUICK_EXIT:
             self.warnings.append(
@@ -518,6 +542,7 @@ class Session:
             "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
             "workspace": str(self.workspace),
             "task_prompt": canary.TASK_PROMPT,
+            "canary_set": canary.CANARY_SET,
             "warnings": self.warnings,
             "sample": getattr(args, "sample", False),  # True for the simulated demo agent
         }
@@ -534,6 +559,8 @@ def _tilde(path: str) -> str:
 
 
 def print_summary(s: dict, html: Path) -> None:
+    from whatsent import report
+
     t = s["totals"]
     lines = [
         "",

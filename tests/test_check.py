@@ -37,6 +37,12 @@ def test_a_good_result_passes():
     assert validate(good(), "claude-2.1.301-clean.json") == []
 
 
+def test_a_newer_canary_set_gets_its_own_file_name():
+    r = edit(lambda r: r.update(canary_set=2))
+    assert validate(r, "claude-2.1.301-clean-set2.json") == []
+    assert any("file name should be" in p for p in validate(r, "claude-2.1.301-clean.json"))
+
+
 @pytest.mark.parametrize("fn, expected", [
     (lambda r: r.update(command=["claude", "-p", "x"]), "unexpected fields: command"),
     (lambda r: r.update(agent="/usr/local/bin/claude"), "looks like a path"),
@@ -53,6 +59,8 @@ def test_a_good_result_passes():
     (lambda r: r.update(kind="web"), "kind is not"),
     (lambda r: r.update(control="great"), "control is not"),
     (lambda r: r.update(runs=0), "runs is not"),
+    (lambda r: r.update(canary_set=99), "canary_set is not"),
+    (lambda r: r.update(canary_set=True), "canary_set is not"),
     (lambda r: r["canaries"]["task_file"].update(sent_to=[], seen_in=0), "task file was never seen"),
     (lambda r: r.pop("totals"), "missing fields: totals"),
 ])

