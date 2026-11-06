@@ -40,7 +40,7 @@ jobs:
           [ "$reported" = "whatsent ${GITHUB_REF_NAME#v}" ]
           smoke/bin/whatsent demo --out smoke-demo
           test -f smoke-demo/*/report.html
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
