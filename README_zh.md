@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-  <img alt="whatsent 回放一个模拟 Agent：请求和金丝雀实时出现，最后生成报告：6 个标记里有 3 个离开了本机，其中包括 .env 密钥" src="docs/demo.gif" width="880">
+  <img alt="whatsent 回放一个模拟 Agent：请求和金丝雀实时出现，最后生成报告：8 个标记里有 4 个离开了本机，其中包括 .env 密钥和一个环境变量" src="docs/demo.gif" width="880">
 </picture>
 
 **[在线演示](https://sundaysebasidian-byte.github.io/whatsent/demo/)** · [测评榜](https://sundaysebasidian-byte.github.io/whatsent/) · [示例报告](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html) · [检测准确性](docs/ACCURACY.md) · [English](README.md)
@@ -39,7 +39,7 @@ whatsent 是审计工具，不是防火墙，不拦截任何东西。
 
 ## 原理
 
-1. **金丝雀项目**：自动生成一个小型假项目，每个文件里埋一个唯一的随机标记：任务相关文件、无关源文件、被 gitignore 的 `.env`、被 gitignore 的凭据文件、一个"文件名本身就是标记"的文件、一条 git 提交信息。所有值都明显是假的，每次运行都重新生成。
+1. **金丝雀项目**：自动生成一个小型假项目，每个文件里埋一个唯一的随机标记：任务相关文件、无关源文件、被 gitignore 的 `.env`、被 gitignore 的凭据文件、一个"文件名本身就是标记"的文件、一条 git 提交信息。另外还会在 Agent 的环境变量里、以及工作区旁边的另一个项目里各放一个密钥。所有值都明显是假的，每次运行都重新生成。
 2. **抓包**：在本地启动 [mitmproxy](https://mitmproxy.org)，让 Agent 走这个代理并信任本次运行专用的 CA 证书，从而读取 HTTPS 请求。每个请求、流式上传和 WebSocket 连接都会搜索标记，最多解开四层编码：URL、base64/base64url、hex、UTF-16、JSON 转义、gzip、zstd、zlib/deflate、Brotli、zip/tar 以及 gRPC/Connect 分帧，也包括 base64 包着 gzip 这类组合。标记被拆到多条 WebSocket 消息里同样能找到。
 3. **落盘监控**：运行前后各给 Agent 的缓存和配置目录拍一次快照。对上传内容加密的工具通常会先在本地生成打包文件，whatsent 会列出新出现的压缩包和大文件，并在里面搜索标记。
 4. **绕过检测**：运行期间采样 Agent 打开的网络连接，绕开代理的连接（TCP 或 UDP/QUIC）会标为"未能检查"，而不是被当成干净。
@@ -129,14 +129,14 @@ whatsent run --app trae --capture local:Trae
 ## 怎么看报告
 
 - **灰色：结果没法确认 / 测试没做完**：任务文件（`src/app.py`，标记就在有 bug 的那一行）一定会发给模型，所以它是检验抓包是否有效的对照。如果没看到它发出，报告顶部会直接这样标出，而不是显示干净：要么 Agent 没做完任务（重测，等它改好再退出），要么它用 whatsent 读不了的方式发了出去。用了 `--runs` 时，只要有一次没确认，合并后的结果就标为没法确认。
-- **红色**：任务根本不需要的东西被发出去了（`.env`、凭据、git 历史）。
+- **红色**：任务根本不需要的东西被发出去了（`.env`、凭据、git 历史、环境变量、隔壁项目）。
 - **橙色 / →**：普通项目文件被发出去了。把你让它改的文件发给模型是正常的；发了无关文件或目录列表，说明它上传的上下文有多宽。
 - **未能检查**：拒绝 whatsent 证书的域名（证书锁定）或绕开代理的连接。这一栏不为空时，"没有泄露"不能说明问题。
 - **写入磁盘**：本地留下的副本（比如对话日志）和新出现的压缩包。如果大上传前刚好冒出一个压缩包，值得细看。
 
 ## 测评榜
 
-`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。`whatsent check results/` 会拒绝带了汇总以外内容、或数字对不上的文件，CI 在每个 PR 上都会跑它。榜单生成前会校验全部输入，拒绝无效或空输入；只有 Agent 版本、clean 配置、系统及架构、捕获模式、whatsent 版本和金丝雀定义一致的结果才合并。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
+`whatsent board results/ -o site/` 会把多份 `result.json` 汇总成一个静态页面和 `leaderboard.json`，由 GitHub Actions 发布到 GitHub Pages。想加一个 Agent：用建议的任务跑一遍，例如 `whatsent run --clean --result-to results/ -- <agent>`，然后提 PR 把它存下的文件放进 [`results/`](results/README.md)。`result.json` 只有汇总数据：哪些金丝雀被发出、目的域名、字节数，不含路径、提示词或文件内容。`whatsent check results/` 会拒绝带了汇总以外内容、或数字对不上的文件，CI 在每个 PR 上都会跑它。榜单生成前会校验全部输入，拒绝无效或空输入；只有 Agent 版本、clean 配置、系统及架构、捕获模式、whatsent 版本和金丝雀定义一致的结果才合并。不同组的金丝雀分开排名：加入环境变量和隔壁项目之前的结果属于第 1 组，要重跑才能进第 2 组。用了 `--clean` 的结果会在榜上标出，并和带着本机 MCP 服务器、插件的结果分开排名。
 
 测评榜展示的是 [`results/`](results/) 里的真实结果；这个目录为空时，才展示虚构 Agent 的示例数据，页面上会明确标注为示例（见 [examples/make_examples.py](examples/make_examples.py)）。
 

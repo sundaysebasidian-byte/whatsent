@@ -331,7 +331,7 @@ class Session:
                 command = [os.path.abspath(executable), *command[1:]]
         self.started = datetime.now()
         self.run_dir = (args.out / self.started.strftime("%Y%m%d-%H%M%S")).resolve()
-        self.workspace = self.run_dir / "workspace"
+        self.workspace = self.run_dir / "projects" / "invoice-tools"
         self.roots = ([] if args.no_default_watch else diskwatch.default_roots()) + \
             [w.resolve() for w in args.watch]
         self.warnings: list[str] = []
@@ -363,8 +363,9 @@ class Session:
         from whatsent.detect import Matcher
 
         self.run_dir = reserve_directory(self.run_dir)
-        self.workspace = self.run_dir / "workspace"
-        self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace)]
+        self.workspace = self.run_dir / "projects" / "invoice-tools"
+        # The project gets a folder of its own, so ".." shows a neighbouring project rather than this run's files.
+        self.canaries = [c.to_dict() for c in canary.create_workspace(self.workspace, neighbour=True)]
         self.canaries_file = self.run_dir / "canaries.json"
         self.canaries_file.write_text(json.dumps(self.canaries, indent=2), encoding="utf-8")
         self.matcher = Matcher({c["id"]: c["token"] for c in self.canaries})
@@ -391,6 +392,8 @@ class Session:
 
     def start_proxy(self, capture: str | None = None) -> None:
         """Start the proxy, or restart it with another capture mode before the agent is launched."""
+        from whatsent import canary
+
         capture = capture or getattr(self.args, "capture", "env")
         local_spec = None
         if capture.startswith("local"):
@@ -407,6 +410,7 @@ class Session:
         self.proxy.start()
         self.env = self.proxy.agent_env(dict(os.environ), self.proxy.write_ca_bundle(self.run_dir / "ca-bundle.pem"))
         self.env.update(self.extra_env)
+        self.env.update(canary.agent_env(self.canaries))
 
     def agent_command(self) -> list[str]:
         if self.app:
@@ -538,6 +542,7 @@ class Session:
             "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
             "workspace": str(self.workspace),
             "task_prompt": canary.TASK_PROMPT,
+            "canary_set": canary.CANARY_SET,
             "warnings": self.warnings,
             "sample": getattr(args, "sample", False),  # True for the simulated demo agent
         }

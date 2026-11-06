@@ -41,3 +41,19 @@ def test_results_of_the_same_agent_are_combined_under_the_newest_date():
     new = {**old, "date": "2099-02-01"}
     (row,) = board.latest_per_agent([old, new])
     assert row["date"] == "2099-02-01" and row["runs"] == 2
+
+
+def test_each_canary_set_is_ranked_on_its_own(tmp_path):
+    def result(agent: str, cset: int) -> dict:
+        r = json.loads((EXAMPLES / "example-agent-a.json").read_text(encoding="utf-8"))
+        r.update(agent=agent, canary_set=cset)
+        return r
+
+    old, new = result("old", 1), result("new", 2)
+    (tmp_path / "in").mkdir()
+    for r in (old, new):
+        (tmp_path / "in" / board.result_name(r)).write_text(json.dumps(r), encoding="utf-8")
+    assert board.build([tmp_path / "in"], tmp_path / "site") == 0
+    html = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
+    assert html.index("Canary set 2") < html.index("<b>new</b>") < html.index("Canary set 1") < html.index("<b>old</b>")
+    assert html.count('<td class="n" data-label="#">1</td>') == 2

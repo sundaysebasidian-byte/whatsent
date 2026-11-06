@@ -77,6 +77,7 @@
       canaries: {
         task_file: '任务要改的文件', unrelated_source: '和任务无关的源文件', dotenv: '.env 里的密钥',
         credentials: '云服务凭据', file_name: '文件名本身', git_history: 'git 提交记录',
+        env_var: '环境变量里的密钥', neighbour: '隔壁项目的密钥',
       },
     },
     en: {
@@ -144,6 +145,7 @@
       canaries: {
         task_file: 'File the task asks about', unrelated_source: 'Unrelated source file', dotenv: 'Secret in .env',
         credentials: 'Cloud credentials', file_name: 'File name only', git_history: 'Git commit message',
+        env_var: 'Secret in an environment variable', neighbour: 'Secret in a neighbouring project',
       },
     },
   };

@@ -46,7 +46,7 @@ sys.meta_path.insert(0, Guard())
     assert len(set(activated.read_text().splitlines())) >= 3  # CLI, proxy and simulated agent
     assert not attempted.exists(), "Tornado was imported by the CLI or a capture subprocess"
     (output,) = (tmp_path / "out").glob("*/result.json")
-    assert json.loads(output.read_text())["totals"]["leaked"] == 3
+    assert json.loads(output.read_text())["totals"]["leaked"] == 4
 
 
 def test_demo_end_to_end(tmp_path):
@@ -69,7 +69,9 @@ def test_demo_end_to_end(tmp_path):
     assert by_id["file_name"]["sent_to"] == [HOSTS["api"]]  # directory listing
     assert by_id["unrelated_source"]["sent_to"] == []
     assert by_id["credentials"]["sent_to"] == []
-    assert s["totals"]["leaked_sensitive"] == 1
+    assert by_id["env_var"]["sent_to"] == [HOSTS["telemetry"]]  # read from the agent's environment
+    assert by_id["neighbour"]["sent_to"] == []
+    assert s["totals"]["leaked_sensitive"] == 2
     assert any(d["host"] == HOSTS["upload"] and d["bytes_out"] > 300 * 1024 for d in s["destinations"])
 
     # The fake home is redacted to ~ in the report.

@@ -109,7 +109,7 @@ def test_static_demo_site(tmp_path):
     inline = json.loads(re.search(r'id="whatsent-replay">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))
     assert inline["events"][-1]["report"]["url"] == "../sample-report.html"
     sample = (tmp_path / "sample-report.html").read_text(encoding="utf-8")
-    assert "3 of 6 canaries left this machine" in sample
+    assert "4 of 8 canaries left this machine" in sample
     assert 'href="demo/"' in sample and 'href="./"' in sample
     assert (demo / "app.js").read_bytes() == (UI / "app.js").read_bytes()  # the real UI, not a copy of it
 

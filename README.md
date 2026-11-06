@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-  <img alt="whatsent replaying a simulated agent: requests and canaries arrive live, then the report: 3 of 6 markers left this computer, including the .env secret" src="docs/demo.gif" width="880">
+  <img alt="whatsent replaying a simulated agent: requests and canaries arrive live, then the report: 4 of 8 markers left this computer, including the .env secret and an environment variable" src="docs/demo.gif" width="880">
 </picture>
 
 **[Live demo](https://sundaysebasidian-byte.github.io/whatsent/demo/)** · [Leaderboard](https://sundaysebasidian-byte.github.io/whatsent/) · [Sample report](https://sundaysebasidian-byte.github.io/whatsent/sample-report.html) · [Detection accuracy](docs/ACCURACY.md) · [中文说明](README_zh.md)
@@ -39,7 +39,7 @@ whatsent is an audit tool, not a firewall. It does not block anything.
 
 ## How it works
 
-1. **Canary project.** whatsent creates a small fake project and plants a unique random marker in each file: the file the task is about, an unrelated source file, a gitignored `.env`, a gitignored credentials file, a file whose *name* is the marker, and a git commit message. All values are obviously fake and new on every run.
+1. **Canary project.** whatsent creates a small fake project and plants a unique random marker in each file: the file the task is about, an unrelated source file, a gitignored `.env`, a gitignored credentials file, a file whose *name* is the marker and a git commit message. It also puts a secret in the agent's environment variables and in a neighbouring project next to the workspace. All values are obviously fake and new on every run.
 2. **Traffic capture.** It starts a local [mitmproxy](https://mitmproxy.org) and points the agent at it with a per-run CA certificate, so HTTPS requests can be read. Every request, streamed upload and WebSocket connection is searched for the markers, through up to four layers of encoding: URL, base64/base64url, hex, UTF-16, JSON escapes, gzip, zstd, zlib/deflate, Brotli, zip/tar and gRPC/Connect framing, including combinations such as base64-wrapped gzip. A marker split across WebSocket messages is still found.
 3. **Disk watch.** It snapshots the agent's cache and config folders before and after the run. Tools that encrypt their uploads usually stage them on disk first; whatsent lists new archives and large blobs and searches them for markers.
 4. **Bypass check.** It samples the agent's open sockets during the run, so a connection that skips the proxy (TCP or UDP/QUIC) shows up as "not inspected" instead of silently looking clean.
@@ -129,14 +129,14 @@ By default whatsent watches agent folders such as `~/.claude`, `~/.codex`, `~/.g
 ## Reading the report
 
 - **Grey: not confirmed / incomplete**: the task file (`src/app.py`, with its marker on the buggy line) must reach the model, so it is the run's check that capture works. If it was never seen leaving, the report says so at the top instead of looking clean: either the agent did not finish the task (run again and exit only after it is done), or it sent the file in a form whatsent could not read. With `--runs`, one run that is not confirmed marks the combined result.
-- **Red**: something no task needed left the machine (`.env`, credentials, git history).
+- **Red**: something no task needed left the machine (`.env`, credentials, git history, the environment variable, the neighbouring project).
 - **Amber / →**: ordinary project files left the machine. Sending the file you asked about to the model is expected; sending unrelated files or a directory listing tells you how much context the agent uploads.
 - **Not inspected**: hosts that rejected whatsent's certificate (certificate pinning) or connections that ignored the proxy. A clean report means nothing if this section is not empty.
 - **Written to disk**: local copies of your files (for example conversation logs) and new archives. An archive that appears right before a large upload is worth a closer look.
 
 ## Leaderboard
 
-`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. `whatsent check results/` rejects files that carry more than aggregates or whose numbers do not add up, and CI runs it on every pull request. The board validates its inputs before writing anything and refuses invalid or empty input. Runs are combined only when the agent version, clean mode, operating system/architecture, capture mode, whatsent version and canary definitions match. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
+`whatsent board results/ -o site/` turns many `result.json` files into a static page and `leaderboard.json`; GitHub Actions publishes it to GitHub Pages. To add an agent, run it with the suggested prompt, for example `whatsent run --clean --result-to results/ -- <agent>`, and open a pull request with the file it saves in [`results/`](results/README.md). `result.json` holds only aggregates: which canaries left, destination hosts and byte counts, with no paths, prompts or file contents. `whatsent check results/` rejects files that carry more than aggregates or whose numbers do not add up, and CI runs it on every pull request. The board validates its inputs before writing anything and refuses invalid or empty input. Runs are combined only when the agent version, clean mode, operating system/architecture, capture mode, whatsent version and canary definitions match. Each canary set is ranked on its own: results from before the environment variable and neighbouring project were added form set 1 and need a rerun to join set 2. A run with `--clean` is marked on the board and ranked apart from one with the machine's own MCP servers and plugins.
 
 Results from [`results/`](results/) are what the board shows. While that folder is empty it shows made-up examples of fictional agents, labelled as examples ([examples/make_examples.py](examples/make_examples.py)).
 

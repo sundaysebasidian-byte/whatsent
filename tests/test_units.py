@@ -33,11 +33,23 @@ def test_matcher_finds_encoded_forms():
 def test_workspace_plants_unique_tokens(tmp_path):
     cs = canary.create_workspace(tmp_path)
     assert len({c.token for c in cs}) == len(cs)
+    assert not (tmp_path.parent / "payments-service").exists()  # only planted when asked
     for c in cs:
         if c.id == "file_name":
             assert (tmp_path / c.file).exists() and c.token in c.file
+        elif c.id == "env_var":
+            assert canary.agent_env([c.to_dict()]) == {canary.ENV_VAR: f"whatsent-canary-{c.token}"}
         elif c.id != "git_history":
             assert c.token in (tmp_path / c.file).read_text(encoding="utf-8")
+
+
+def test_neighbour_secret_sits_outside_the_workspace(tmp_path):
+    root = tmp_path / "projects" / "invoice-tools"
+    cs = {c.id: c for c in canary.create_workspace(root, neighbour=True)}
+    secret = tmp_path / "projects" / "payments-service" / ".env"
+    assert cs["neighbour"].token in secret.read_text(encoding="utf-8") and cs["neighbour"].sensitive
+    assert not any(cs["neighbour"].token in p.read_text(encoding="utf-8", errors="replace")
+                   for p in root.rglob("*") if p.is_file())
 
 
 def test_diskwatch_diff(tmp_path):
